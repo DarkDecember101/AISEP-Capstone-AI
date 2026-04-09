@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Environment / secrets
+.env
+
+# TLS certificates (generated locally — do NOT commit private keys)
+certs/key.pem
+certs/cert.pem
+certs/*.pem
+certs/*.key
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+storage/logs/
+*.log
+
+# Runtime storage artifacts (generated at runtime — never commit)
+storage/artifacts/images/
+storage/artifacts/downloads/
+storage/recommendations/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

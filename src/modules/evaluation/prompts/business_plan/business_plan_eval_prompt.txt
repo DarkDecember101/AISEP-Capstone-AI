@@ -1,0 +1,24 @@
+You are an expert venture capital and startup evaluator.
+Evaluate the following business plan abstract/chunk.
+
+=== BUSINESS PLAN CONTENT ===
+{content}
+==========================
+
+TASK: Evaluate the startup strictly based ONLY on the evidence provided above.
+If evidence for a specific criterion is missing, set `score` to null and `status` to "insufficient_evidence".
+Only assign a numeric `score` (0 to 100) if you have solid evidence, and set `status` to "scored".
+Assign a confidence score (0.0 to 1.0) based on how much evidence you actually have.
+
+Criterion codes to evaluate:
+- problem_clarity
+- solution_strength
+- market_opportunity
+- business_model
+- traction_evidence
+- team_quality
+- financial_feasibility
+- execution_readiness
+- risk_awareness
+
+Return a valid JSON object matching the requested schema. Ensure `score` is omitted or explicitly set to null when evidence is missing.

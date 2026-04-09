@@ -1,0 +1,215 @@
+{
+  "manifest_version": "1.1",
+  "service": {
+    "name": "AISEP AI Evaluation Service",
+    "entrypoint": "src/main.py",
+    "framework": "FastAPI",
+    "health_endpoints": {
+      "simple": { "method": "GET", "path": "/health" },
+      "liveness": { "method": "GET", "path": "/health/live" },
+      "readiness": { "method": "GET", "path": "/health/ready" }
+    },
+    "error_envelope": {
+      "fields": ["code", "message", "detail", "retryable", "correlation_id"],
+      "correlation_header": "X-Correlation-Id"
+    },
+    "auth": {
+      "mechanism": "X-Internal-Token header",
+      "toggle_env": "REQUIRE_INTERNAL_AUTH",
+      "secret_env": "AISEP_INTERNAL_TOKEN"
+    }
+  },
+  "modules": [
+    {
+      "name": "evaluation",
+      "mode": "async-submit-poll",
+      "status_source_of_truth": "database.evaluation_runs.status",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/evaluations/history",
+          "query": ["startup_id"],
+          "auth": "none_observed"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/evaluations/",
+          "auth": "none_observed",
+          "request_schema": "SubmitEvaluationRequest",
+          "response_schema": "SubmitEvaluationResponse"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/evaluations/{id}",
+          "auth": "none_observed"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/evaluations/{id}/report",
+          "auth": "none_observed",
+          "response_schema": "CanonicalEvaluationResult",
+          "not_ready_status": 202
+        }
+      ],
+      "async_worker": {
+        "technology": "Celery",
+        "task": "src.modules.evaluation.workers.tasks.process_evaluation_task",
+        "broker_env": "CELERY_BROKER_URL",
+        "backend_env": "CELERY_RESULT_BACKEND",
+        "windows_behavior": {
+          "worker_pool": "solo",
+          "worker_concurrency": 1
+        }
+      },
+      "webhook": {
+        "trigger": "terminal evaluation status (completed|failed)",
+        "config_env": [
+          "WEBHOOK_CALLBACK_URL",
+          "WEBHOOK_SIGNING_SECRET",
+          "WEBHOOK_MAX_RETRIES"
+        ],
+        "signing": "HMAC-SHA256 via X-Webhook-Signature header",
+        "retry_policy": "exponential backoff, configurable max retries",
+        "audit_table": "webhook_deliveries",
+        "idempotency": "stable delivery_id per run+status"
+      },
+      "rate_limit": {
+        "endpoint": "POST /api/v1/evaluations/",
+        "default_rpm": 20,
+        "config_env": "RATE_LIMIT_EVAL_RPM"
+      }
+    },
+    {
+      "name": "recommendation",
+      "mode": "sync",
+      "storage": "configurable_db_or_filesystem",
+      "storage_default": "db",
+      "storage_legacy_path": "storage/recommendations",
+      "migration_utility": "python -m src.modules.recommendation.scripts.migrate_json_to_db",
+      "rate_limit": {
+        "endpoints": [
+          "GET /api/v1/recommendations/startups",
+          "GET /api/v1/recommendations/startups/{startup_id}/explanation"
+        ],
+        "default_rpm": 60,
+        "config_env": "RATE_LIMIT_RECO_RPM",
+        "internal_endpoints_exempt": true
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/internal/recommendations/reindex/startup/{startup_id}",
+          "auth": "x-internal-token-if-configured"
+        },
+        {
+          "method": "POST",
+          "path": "/internal/recommendations/reindex/investor/{investor_id}",
+          "auth": "x-internal-token-if-configured"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/recommendations/startups",
+          "query": ["investor_id", "top_n"],
+          "auth": "none_observed"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/recommendations/startups/{startup_id}/explanation",
+          "query": ["investor_id"],
+          "auth": "none_observed"
+        }
+      ]
+    },
+    {
+      "name": "investor_agent",
+      "mode": "sync_and_stream",
+      "memory": "configurable_langgraph_checkpoint_redis_or_memory",
+      "rate_limit": {
+        "chat_rpm": 30,
+        "stream_rpm": 30,
+        "config_env": ["RATE_LIMIT_CHAT_RPM", "RATE_LIMIT_STREAM_RPM"]
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/investor-agent/research",
+          "auth": "none_observed"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/investor-agent/chat",
+          "auth": "none_observed"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/investor-agent/chat/stream",
+          "transport": "text/event-stream",
+          "sse_event_types": [
+            "progress",
+            "answer_chunk",
+            "final_answer",
+            "final_metadata",
+            "error"
+          ],
+          "done_marker": "[DONE]",
+          "auth": "none_observed"
+        }
+      ]
+    }
+  ],
+  "environment_variables": [
+    "DATABASE_URL",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "DEFAULT_LLM_PROVIDER",
+    "DEFAULT_MODEL_NAME",
+    "ENABLE_PSEUDO_OCR_FALLBACK",
+    "TAVILY_API_KEY",
+    "TAILY_API_KEY",
+    "AISEP_INTERNAL_TOKEN",
+    "REQUIRE_INTERNAL_AUTH",
+    "CELERY_BROKER_URL",
+    "CELERY_RESULT_BACKEND",
+    "LOG_LEVEL",
+    "WEBHOOK_CALLBACK_URL",
+    "WEBHOOK_SIGNING_SECRET",
+    "WEBHOOK_MAX_RETRIES",
+    "OTEL_ENABLED",
+    "OTEL_SERVICE_NAME",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "RATE_LIMIT_ENABLED",
+    "RATE_LIMIT_EVAL_RPM",
+    "RATE_LIMIT_CHAT_RPM",
+    "RATE_LIMIT_STREAM_RPM",
+    "RATE_LIMIT_RECO_RPM"
+  ],
+  "integration_notes": {
+    "dotnet_polling_required_for_evaluation": true,
+    "webhook_contract_present": true,
+    "webhook_optional": true,
+    "api_contract_uniformity": "unified_error_envelope",
+    "security_coverage": "internal_endpoints_with_toggle",
+    "correlation_id": "auto_assigned_per_request",
+    "rate_limiting": "configurable_per_endpoint_token_bucket",
+    "tracing": "optional_opentelemetry"
+  },
+  "source_files": [
+    "src/main.py",
+    "src/shared/config/settings.py",
+    "src/shared/error_response.py",
+    "src/shared/correlation.py",
+    "src/shared/auth.py",
+    "src/shared/health.py",
+    "src/celery_app.py",
+    "src/modules/evaluation/api/router.py",
+    "src/modules/evaluation/workers/tasks.py",
+    "src/modules/recommendation/api/router.py",
+    "src/modules/recommendation/infrastructure/repositories/recommendation_repository.py",
+    "src/modules/investor_agent/api/router.py",
+    "src/modules/investor_agent/infrastructure/graph/builder.py",
+    "src/shared/webhook/delivery.py",
+    "src/shared/tracing/setup.py",
+    "src/shared/rate_limit/limiter.py",
+    "src/shared/persistence/models/webhook_models.py"
+  ]
+}
