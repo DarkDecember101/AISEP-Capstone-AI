@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from src.shared.config.settings import settings
 from src.shared.providers.llm.gemini_client import GeminiClient
+from src.shared.observability.metrics import RECO_RERANK_APPLIED_TOTAL
 from src.modules.recommendation.application.dto.recommendation_schema import (
     InvestorRecommendationDocument,
     LLMRerankItem,
@@ -28,6 +29,7 @@ class RecommendationLLMReranker:
         candidates: List[dict],
     ) -> tuple[List[LLMRerankItem], List[str]]:
         if self._client is None:
+            RECO_RERANK_APPLIED_TOTAL.labels(outcome="skipped").inc()
             return [], ["LLM rerank skipped because GEMINI_API_KEY is not configured"]
 
         investor_context = {
@@ -69,9 +71,14 @@ Allowed reason codes:
 INDUSTRY_MATCH, STAGE_MATCH, GEOGRAPHY_MATCH, MARKET_SCOPE_MATCH, VALIDATION_MATCH, SUPPORT_OVERLAP, STRENGTHS_ALIGN, AI_SCORE_RANGE_MATCH, VALIDATION_EARLY, AI_SCORE_MISSING, WEAK_VERIFICATION
 """
 
-        result = self._client.generate_structured(
-            prompt=prompt,
-            response_schema=LLMRerankResponse,
-            model_name="gemini-2.5-flash",
-        )
-        return result.items, []
+        try:
+            result = self._client.generate_structured(
+                prompt=prompt,
+                response_schema=LLMRerankResponse,
+                model_name="gemini-2.5-flash",
+            )
+            RECO_RERANK_APPLIED_TOTAL.labels(outcome="success").inc()
+            return result.items, []
+        except Exception:
+            RECO_RERANK_APPLIED_TOTAL.labels(outcome="error").inc()
+            raise

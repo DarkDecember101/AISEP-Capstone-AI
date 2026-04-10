@@ -18,6 +18,17 @@ from src.modules.investor_agent.application.services.final_assembler import (
     assemble_final_response,
 )
 from src.modules.investor_agent.infrastructure.graph.builder import build_investor_agent_graph
+from src.shared.observability.metrics import (
+    AGENT_STREAM_REQUESTS_TOTAL,
+    AGENT_STREAM_DURATION,
+    AGENT_OUT_OF_SCOPE_TOTAL,
+    AGENT_STREAM_ERRORS_TOTAL,
+    AGENT_COVERAGE_INSUFFICIENT,
+    AGENT_VERIFIED_CLAIMS_COUNT,
+    AGENT_REFERENCES_COUNT,
+)
+
+import time as _time
 
 router = APIRouter()
 logger = logging.getLogger("aisep.investor_agent")
@@ -188,6 +199,8 @@ async def chat_research_stream(request: ChatRequest, _rl=Depends(_stream_rate_li
     async def event_generator():
         latest_writer_output: Dict[str, Any] = {}
         latest_graph_output: Dict[str, Any] = {}
+        _stream_start = _time.monotonic()
+        _stream_outcome = "success"
         try:
             async with asyncio.timeout(_GRAPH_STREAM_TIMEOUT_SECONDS):
                 async for event in _chat_graph.astream_events(initial_state, config=config, version="v1"):
@@ -210,6 +223,8 @@ async def chat_research_stream(request: ChatRequest, _rl=Depends(_stream_rate_li
                     if event_type == "on_chain_end" and event_name == "router":
                         router_output = _extract_final_state_from_event(event)
                         if router_output.get("intent") == "out_of_scope":
+                            AGENT_OUT_OF_SCOPE_TOTAL.inc()
+                            _stream_outcome = "out_of_scope"
                             yield _sse({"type": "progress", "node": "scope_guard"})
 
                     if event_type == "on_chain_end" and event_name == "LangGraph":
@@ -227,6 +242,18 @@ async def chat_research_stream(request: ChatRequest, _rl=Depends(_stream_rate_li
                     "Empty final_answer before assembler fallback; source branch=graph_end")
 
             payload = _build_chat_payload(final_state)
+
+            # P1 agent detail metrics
+            grounding = payload.get("grounding_summary", {})
+            if grounding.get("coverage_status") == "insufficient":
+                AGENT_COVERAGE_INSUFFICIENT.inc()
+            AGENT_VERIFIED_CLAIMS_COUNT.observe(
+                grounding.get("verified_claim_count", 0)
+            )
+            AGENT_REFERENCES_COUNT.observe(
+                len(payload.get("references", []))
+            )
+
             answer = payload.get("final_answer", "")
             for answer_chunk in _chunk_text(answer):
                 yield _sse({"type": "answer_chunk", "content": answer_chunk})
@@ -242,17 +269,23 @@ async def chat_research_stream(request: ChatRequest, _rl=Depends(_stream_rate_li
                 "grounding_summary": _safe_grounding(payload.get("grounding_summary")),
             })
         except asyncio.TimeoutError:
+            _stream_outcome = "timeout"
+            AGENT_STREAM_ERRORS_TOTAL.labels(error_type="timeout").inc()
             logger.error(
                 "investor_agent.stream timed out after %ss correlation_id=%s",
                 _GRAPH_STREAM_TIMEOUT_SECONDS, get_correlation_id(),
             )
             yield _sse({"type": "error", "content": "Request timed out. The research pipeline took too long to complete.", "correlation_id": get_correlation_id()})
         except Exception as e:
+            _stream_outcome = "error"
+            AGENT_STREAM_ERRORS_TOTAL.labels(error_type="internal").inc()
             logger.error("investor_agent.stream error=%s correlation_id=%s",
                          e, get_correlation_id())
             yield _sse({"type": "error", "content": "An internal error occurred during streaming.", "correlation_id": get_correlation_id()})
 
         # Always emit terminal marker
+        AGENT_STREAM_REQUESTS_TOTAL.labels(outcome=_stream_outcome).inc()
+        AGENT_STREAM_DURATION.observe(_time.monotonic() - _stream_start)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream; charset=utf-8")

@@ -15,6 +15,7 @@ from src.modules.evaluation.application.dto.evaluation_schema import (
 from src.modules.evaluation.application.dto.canonical_schema import CanonicalEvaluationResult
 from src.modules.evaluation.application.use_cases.submit_evaluation import submit_evaluation
 from src.modules.evaluation.application.services.report_validity import validate_canonical_report
+from src.shared.observability.metrics import EVAL_SUBMISSIONS_TOTAL
 
 router = APIRouter()
 logger = logging.getLogger("aisep.evaluation")
@@ -49,7 +50,13 @@ def submit_evaluation_endpoint(
 ):
     logger.info("evaluation.submit startup_id=%s documents=%d correlation_id=%s",
                 request.startup_id, len(request.documents), get_correlation_id())
-    return submit_evaluation(request)
+    try:
+        result = submit_evaluation(request)
+        EVAL_SUBMISSIONS_TOTAL.labels(status="accepted").inc()
+        return result
+    except Exception:
+        EVAL_SUBMISSIONS_TOTAL.labels(status="error").inc()
+        raise
 
 
 @router.get("/{id}")

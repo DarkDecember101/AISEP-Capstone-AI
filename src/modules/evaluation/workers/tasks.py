@@ -19,9 +19,16 @@ Retry:
     - On retry the status is set to "retry" so the DB reflects truth
 """
 
+import time as _time
 from datetime import datetime
 from src.celery_app import celery_app
 from src.shared.logging.logger import setup_logger
+from src.shared.observability.metrics import (
+    EVAL_RUNS_COMPLETED_TOTAL,
+    EVAL_WORKER_TASK_DURATION,
+    EVAL_DOCUMENTS_PROCESSED,
+    EVAL_WORKER_FAILURES_TOTAL,
+)
 
 logger = setup_logger("celery_tasks")
 
@@ -90,6 +97,7 @@ def process_evaluation_run_task(self, evaluation_run_id: int):
         "[task:start] evaluation_run_id=%s celery_task_id=%s attempt=%s",
         evaluation_run_id, self.request.id, self.request.retries,
     )
+    _task_start = _time.monotonic()
 
     session = next(get_session())
 
@@ -148,11 +156,18 @@ def process_evaluation_run_task(self, evaluation_run_id: int):
                     "evaluation_run_id": evaluation_run_id,
                 }):
                     process_document(doc.id)
+                EVAL_DOCUMENTS_PROCESSED.labels(
+                    doc_type=doc.document_type, outcome="completed"
+                ).inc()
             except Exception as doc_err:
                 logger.error(
                     "[task:doc:error] Document %s failed: %s",
                     doc.id, str(doc_err), exc_info=True,
                 )
+                EVAL_DOCUMENTS_PROCESSED.labels(
+                    doc_type=doc.document_type, outcome="failed"
+                ).inc()
+                EVAL_WORKER_FAILURES_TOTAL.labels(error_type="document_error").inc()
                 # Document-level failure is persisted inside process_document
                 # itself; we continue to the next document.
 
@@ -172,10 +187,13 @@ def process_evaluation_run_task(self, evaluation_run_id: int):
         # ── 6. Refresh status from DB (aggregate may set completed/failed)
         session.refresh(run)
 
+        _elapsed = _time.monotonic() - _task_start
         logger.info(
             "[task:completed] Run %s finished with status '%s'.",
             evaluation_run_id, run.status,
         )
+        EVAL_RUNS_COMPLETED_TOTAL.labels(terminal_status=run.status).inc()
+        EVAL_WORKER_TASK_DURATION.labels(terminal_status=run.status).observe(_elapsed)
 
         # ── 7. Fire webhook callback for terminal statuses ─────────
         if run.status in ("completed", "failed"):
@@ -188,6 +206,10 @@ def process_evaluation_run_task(self, evaluation_run_id: int):
 
     except Exception as exc:
         # ── Transient error -> mark "failed" or "retry" ────────────
+        _elapsed = _time.monotonic() - _task_start
+        EVAL_WORKER_FAILURES_TOTAL.labels(error_type="task_error").inc()
+        EVAL_RUNS_COMPLETED_TOTAL.labels(terminal_status="failed").inc()
+        EVAL_WORKER_TASK_DURATION.labels(terminal_status="failed").observe(_elapsed)
         logger.error(
             "[task:error] Run %s failed: %s (attempt %s/%s)",
             evaluation_run_id, str(exc),

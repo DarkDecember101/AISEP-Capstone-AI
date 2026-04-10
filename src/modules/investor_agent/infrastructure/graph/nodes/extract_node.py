@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 import logging
 from src.modules.investor_agent.application.dto.state import GraphState, ExtractedDocument, SelectedSource, as_model_list
 from src.shared.config.settings import settings
+from src.shared.observability.provider_tracker import track_provider_async
 from tavily import AsyncTavilyClient
 
 
@@ -38,7 +39,8 @@ async def run(state: GraphState) -> Dict[str, Any]:
                     len(selected_sources))
 
         if urls:
-            response = await tavily_client.extract(urls=urls)
+            async with track_provider_async("tavily_extract"):
+                response = await tavily_client.extract(urls=urls)
             for raw_res in response.get("results", []) if isinstance(response, dict) else []:
                 content = (raw_res.get("raw_content")
                            or raw_res.get("content") or "")[:6000]
