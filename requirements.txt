@@ -16,4 +16,8 @@ redis>=5.0
 httpx>=0.24
 psycopg[binary]>=3.1
 pgvector>=0.3.0
-psycopg[binary]>=3.1
+langchain-core
+langgraph
+langgraph-checkpoint-redis
+tavily-python
+langchain-google-genai
