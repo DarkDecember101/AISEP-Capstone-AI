@@ -61,17 +61,17 @@ jobs:
             docker compose up -d --no-deps ai
             docker compose up -d --no-deps ai-worker
 
-            # Health check
+            # Health check (wait up to ~2 minutes for AI service startup)
             echo "Checking AI service health..."
-            sleep 10
-            for i in {1..6}; do
+            sleep 20
+            for i in {1..12}; do
               STATUS=$(curl -m 10 -so /dev/null -w '%{http_code}' https://aisep.xyz/health/ready 2>/dev/null || echo "000")
               if [ "$STATUS" = "200" ]; then
                 echo "AI service is healthy (HTTP $STATUS)"
                 exit 0
               fi
-              echo "  attempt $i/6 (HTTP $STATUS)..."
-              sleep 5
+              echo "  attempt $i/12 (HTTP $STATUS)..."
+              sleep 10
             done
             echo "AI health check failed"
             docker logs repo-ai-1 --tail 50
