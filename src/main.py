@@ -44,11 +44,13 @@ register_error_handlers(app)
 
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
     logger.info("Database initialized.")
     init_tracing()
     logger.info("Tracing bootstrap complete.")
+    from src.shared.checkpoint import setup_checkpointer
+    await setup_checkpointer()
 
 
 # ── Routers ─────────────────────────────────────────────────────────
