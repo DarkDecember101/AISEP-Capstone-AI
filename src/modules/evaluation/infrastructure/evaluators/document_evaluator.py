@@ -94,7 +94,7 @@ class BaseEvaluator:
         else:
             prompt = BUSINESS_PLAN_EVAL_PROMPT.format(content=content)
 
-        if not settings.GEMINI_API_KEY:
+        if not settings.GOOGLE_CLOUD_PROJECT:
             return self._fallback_evaluation(content)
 
         try:
@@ -109,7 +109,7 @@ class BaseEvaluator:
         prompt = PITCH_DECK_EVAL_PROMPT.format(
             content=textual_content if textual_content.strip() else "Visual Pitch Deck Slides attached.")
 
-        if not settings.GEMINI_API_KEY:
+        if not settings.GOOGLE_CLOUD_PROJECT:
             return self._fallback_evaluation(textual_content)
 
         try:

@@ -11,7 +11,11 @@ class Settings(BaseSettings):
 
     # LLM
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    # Vertex AI (replaces GEMINI_API_KEY). Auth via service-account JSON pointed
+    # to by GOOGLE_APPLICATION_CREDENTIALS (handled automatically by the SDK).
+    GOOGLE_CLOUD_PROJECT: str = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    GOOGLE_CLOUD_LOCATION: str = os.getenv(
+        "GOOGLE_CLOUD_LOCATION", "us-central1")
     DEFAULT_LLM_PROVIDER: str = "openai"  # or gemini
     DEFAULT_MODEL_NAME: str = "gpt-4o-mini"
     ENABLE_PSEUDO_OCR_FALLBACK: bool = os.getenv(

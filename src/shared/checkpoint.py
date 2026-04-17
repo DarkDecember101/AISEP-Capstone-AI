@@ -113,6 +113,18 @@ def get_checkpointer() -> BaseCheckpointSaver:
     return _checkpointer
 
 
+async def setup_checkpointer() -> None:
+    """Call asetup() on the checkpointer if it supports it (e.g. AsyncRedisSaver).
+
+    This creates the required RediSearch indexes. Must be called once
+    during application startup (inside an async context).
+    """
+    ckpt = get_checkpointer()
+    if hasattr(ckpt, "asetup"):
+        await ckpt.asetup()
+        logger.info("Checkpointer asetup() completed — RediSearch indexes created.")
+
+
 def reset_checkpointer() -> None:
     """Reset the singleton — used only in tests."""
     global _checkpointer  # noqa: PLW0603
