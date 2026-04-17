@@ -118,18 +118,18 @@ def _check_celery_workers() -> dict:
 def _check_providers() -> dict:
     configured = []
     missing = []
-    if settings.GEMINI_API_KEY:
-        configured.append("gemini")
+    if settings.GOOGLE_CLOUD_PROJECT:
+        configured.append("vertex")
     else:
-        missing.append("gemini")
+        missing.append("vertex")
 
     if settings.TAVILY_API_KEY:
         configured.append("tavily")
     else:
         missing.append("tavily")
 
-    # At least Gemini must be present for core flows
-    ok = "gemini" in configured
+    # At least Vertex AI must be present for core flows
+    ok = "vertex" in configured
     result: dict = {"ok": ok, "configured": configured}
     if missing:
         result["missing"] = missing

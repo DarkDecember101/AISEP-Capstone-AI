@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from src.shared.config.settings import settings
 
 # ── Secrets that must never appear in logs ──────────────────────────
-_SECRET_FIELDS = {"GEMINI_API_KEY", "OPENAI_API_KEY", "TAVILY_API_KEY",
+_SECRET_FIELDS = {"OPENAI_API_KEY", "TAVILY_API_KEY",
                   "AISEP_INTERNAL_TOKEN", "X-Internal-Token", "api_key",
                   "TAILY_API_KEY"}
 

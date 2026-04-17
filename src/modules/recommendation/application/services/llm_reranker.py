@@ -20,7 +20,7 @@ class LLMRerankResponse(BaseModel):
 
 class RecommendationLLMReranker:
     def __init__(self) -> None:
-        self._client = GeminiClient() if settings.GEMINI_API_KEY else None
+        self._client = GeminiClient() if settings.GOOGLE_CLOUD_PROJECT else None
 
     def rerank(
         self,
@@ -28,7 +28,7 @@ class RecommendationLLMReranker:
         candidates: List[dict],
     ) -> tuple[List[LLMRerankItem], List[str]]:
         if self._client is None:
-            return [], ["LLM rerank skipped because GEMINI_API_KEY is not configured"]
+            return [], ["LLM rerank skipped because GOOGLE_CLOUD_PROJECT is not configured"]
 
         investor_context = {
             "investor_name": investor.structured_preferences.investor_name,

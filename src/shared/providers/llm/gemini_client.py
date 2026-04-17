@@ -30,10 +30,15 @@ class GeminiResponseParseError(Exception):
 
 class GeminiClient:
     def __init__(self):
-        if not settings.GEMINI_API_KEY:
-            logger.warning("GEMINI_API_KEY is not set. LLM calls will fail.")
+        if not settings.GOOGLE_CLOUD_PROJECT:
+            logger.warning(
+                "GOOGLE_CLOUD_PROJECT is not set. Vertex AI calls will fail.")
 
-        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        self.client = genai.Client(
+            vertexai=True,
+            project=settings.GOOGLE_CLOUD_PROJECT,
+            location=settings.GOOGLE_CLOUD_LOCATION,
+        )
         self.default_model = "gemini-2.5-flash"
         self.max_retries = 3
 
