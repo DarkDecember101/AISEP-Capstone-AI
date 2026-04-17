@@ -44,21 +44,37 @@ B. REQUIRED CLASSIFICATION CONTEXT
 
 You must resolve:
 - stage ∈ {IDEA, MVP, PRE_SEED, SEED, GROWTH}
-- main_industry ∈ {FINTECH, B2B_SAAS, HEALTHTECH, EDTECH, COMMERCE, PROPTECH, CLEANTECH, AGRITECH, LOGISTICS, FOODTECH, DEEPTECH, LEGALTECH, TRAVELTECH, MEDIATECH, OTHER}
-- subindustry ∈ one of the allowed keys under the selected main industry, or null if uncertain
+- main_industry ∈ {
+    FINTECH,
+    ECOMMERCE,
+    EDTECH,
+    HEALTHTECH_MEDTECH,
+    AGRI_FOODTECH,
+    SAAS_ENTERPRISE_SOFTWARE,
+    OTHER
+  }
+- subindustry ∈ one of the allowed keys under the selected main industry, or null if uncertain or not listed
 
 Resolution priority:
-- First use explicit stage / industry / subindustry if provided by the evaluator request.
+- First use explicit stage / main_industry / subindustry if provided by the evaluator request.
 - Otherwise infer from the Pitch Deck and Business Plan.
 - If inferred, return classification confidence and supporting evidence locations.
-- If stage or main industry is uncertain, continue with best-fit classification but lower classification confidence.
-- If subindustry is uncertain, use the parent industry overlay only and leave subindustry as null.
-- If main industry is OTHER, use only the core rubric without industry overlay. Note in operational_notes that no industry overlay was applied.
+- If stage or main_industry is uncertain, continue with best-fit classification but lower classification confidence.
+- If subindustry is uncertain, not confidently resolvable, or does not belong to the allowed list under the selected main industry, leave subindustry as null.
+- If main_industry is OTHER, use only the core rubric and stage profile. Note in operational_notes that no overlay was applied.
+- If main_industry belongs to one of the 6 supported main industries but no listed subindustry is confidently resolvable, use only the core rubric and stage profile for scoring, and do NOT apply any industry or subindustry overlay. Note this in operational_notes.
 
 Classification confidence levels:
 - High = strong, clear evidence
 - Medium = reasonable but not definitive evidence
 - Low = weak or ambiguous evidence
+
+Important classification rules:
+- Stage affects maturity expectation and effective weights, so it must be resolved conservatively.
+- Main industry affects taxonomy and downstream compatibility.
+- Subindustry is optional and should be applied only when confidently resolvable from the documents.
+- Never force a subindustry when the evidence is weak.
+- Supported main industries without a confidently matched listed subindustry must not receive overlay-based interpretation.
 
 ==================================================
 C. CRITERIA
@@ -408,6 +424,7 @@ Score anchors:
 Calibration example:
 - "We have 10,000 downloads" = score 3 (vanity, no quality context)
 - "500 MAU, 40% month-1 retention, 50 paying customers at $200/mo ($10K MRR), 15% MoM growth over 4 months, 3 enterprise pilots with signed LOIs" = score 8 (quality metrics, context, consistency)
+
 ==================================================
 E. STAGE PROFILES
 ==================================================
@@ -631,6 +648,11 @@ Industry overlays do not create new criteria.
 They refine interpretation, proof strength, and red flags.
 Subindustry overlay is more specific than industry overlay, but may not override global guardrails.
 
+Important application rule:
+- For the 6 supported main industries below, overlays are applied only when a listed subindustry under that main industry is confidently resolved.
+- If a startup belongs to one of the 6 supported main industries but does not clearly fit any listed subindustry, use only the core rubric and stage profile. Do not apply the parent industry overlay or any subindustry overlay.
+- If main_industry is OTHER, use only the core rubric and stage profile.
+
 ------------------------------
 FINTECH
 ------------------------------
@@ -650,272 +672,145 @@ Strong signals:
 - validation: repeat transaction behavior, merchant/institution adoption, revenue quality, fraud/default/approval context, regulatory milestone
 
 Red flags:
-- no mention of compliance, trust, or risk
+- no mention of compliance, trust, or risk in a regulated segment
 - large volume with unclear quality
 - vague monetization
 - unclear partner dependency
-- no regulatory awareness in a regulated segment
+- no regulatory awareness where regulation is central
 
 ------------------------------
-B2B_SAAS
-------------------------------
-Interpretation focus:
-- workflow pain specificity
-- ICP clarity and narrowness
-- buyer-user separation understanding
-- ROI quantification
-- adoption depth and retention / expansion
-- appropriate GTM motion for price point and buyer
-
-Strong signals:
-- problem tied to a specific workflow with named steps or tools
-- why now tied to AI adoption, cost pressure, stack fragmentation, regulation, or remote work shift
-- strong workflow fit and sensible integrations with existing tools
-- measurable value proposition (time saved, cost reduced, error rate decreased)
-- motion clearly stated: PLG, sales-led, founder-led, channel, land-and-expand with rationale for choice
-- pricing logic such as seat / usage / value-based with justification
-- team understands the workflow domain or has built/sold B2B products before
-- validation with active teams/accounts, repeat usage, retention/expansion data, paid pilots, NPS or satisfaction
-
-Red flags:
-- ICP is unclear or too broad
-- buyer and user are not separated when they should be
-- moat is only "AI" or "data" without specifics
-- large usage claim with weak retention context
-- no explanation of sales cycle length or buyer decision process
-
-------------------------------
-HEALTHTECH
+ECOMMERCE
 ------------------------------
 Interpretation focus:
-- workflow fit in actual clinical or operational setting
-- trust and safety awareness
-- adoption barriers (regulatory, institutional, behavioral)
-- buyer-user separation (clinician, hospital, insurer, patient)
-- clinical or operational value with evidence
-- deployment reality (integration, training, change management)
+- transaction loop completeness
+- buyer/seller or merchant/customer interaction quality
+- conversion, repeat purchase, and retention
+- fulfillment or delivery logic when relevant
+- marketplace liquidity or commerce infrastructure realism
 
 Strong signals:
-- problem tied to admin burden, coordination failure, delays, triage inefficiency, clinician workload, patient adherence
-- market segment clearly defined by care setting, specialty, patient group, or geography
-- why now tied to staffing shortage, digitalization mandates, reimbursement shifts, telemedicine adoption
-- high workflow fit and clear adoption reason for the end user
-- differentiation in usability, workflow integration, data quality, or clinical outcome improvement
-- buyer clarity across provider, clinic, employer, payer, patient
-- procurement / reimbursement / channel logic appropriate for healthcare
-- team understands clinical, provider ops, payer, or health workflows from experience
-- validation from pilot sites, clinician usage, operational improvement, adherence data, repeat engagement
+- problem tied to discovery, convenience, trust, merchant enablement, conversion, fulfillment friction, or transaction transparency
+- why now tied to consumer behavior shifts, creator economy, platform migration, social commerce growth, mobile adoption, or fragmented commerce infrastructure
+- clear transaction or commerce flow from discovery to order to repeat
+- differentiation in curation, convenience, trust, logistics, workflow efficiency, community, or conversion quality
+- clear monetization: take rate, subscription, SaaS fee, margin, or service fee with context
+- if marketplace, clear seeding strategy, liquidity logic, and supply-demand balancing strategy
+- team understands commerce ops, fulfillment, growth, merchant tooling, or network building
+- validation via repeat transactions, conversion quality, GMV with context, supply retention, customer retention, cohort quality, or order frequency
 
 Red flags:
-- care workflow unclear or not specific to a setting
-- buyer vs user unclear
-- clinical claims without evidence or pilot data
-- implementation friction ignored (training, integration, change management)
-- no awareness of regulatory requirements (FDA, CE, local MoH)
-- "AI diagnosis" claims without clinical validation context
+- large GMV with weak monetization logic
+- no retention or repeat signal
+- vague acquisition source
+- marketplace model with no liquidity or supply acquisition logic
+- fulfillment-heavy model with no unit economics or operational explanation
 
 ------------------------------
 EDTECH
 ------------------------------
 Interpretation focus:
 - learning outcomes, not just engagement
-- learner engagement quality (depth, not just time-on-platform)
-- completion and retention rates
-- buyer-user separation complexity (learner ≠ payer in many segments)
-- ability to deploy in real learning contexts (school, enterprise, home)
+- learner engagement quality and completion
+- buyer-user separation complexity
+- deployment in real learning contexts
+- instructional or skill-development logic
 
 Strong signals:
-- problem tied to learning gap, low completion, teacher/admin burden, training inefficiency, skill gap
-- why now tied to digital learning adoption, AI-assisted learning, upskilling demand, education reform
-- clear learning workflow showing how the product fits into actual teaching/learning
-- concrete value such as improved completion, mastery, personalization, reduced workload, or cost per learner
-- buyer clarity: learner, parent, school, employer, HR/L&D, government
-- motion clarity: B2C subscription, school sales cycle, enterprise learning budget, marketplace
-- team understands education, pedagogy, curriculum, training ops, or learner behavior
-- validation via retention, completion rates, repeat learning sessions, pilot outcomes, teacher/admin adoption, learning gain data
+- problem tied to learning gap, low completion, teacher/admin burden, assessment difficulty, skill mismatch, or access issues
+- why now tied to digital learning adoption, AI-assisted learning, upskilling demand, exam pressure, education reform, or remote learning behavior
+- clear learning workflow showing how the product fits into real teaching/learning
+- concrete value such as improved completion, mastery, assessment quality, personalization, reduced workload, or cost per learner
+- buyer clarity: learner, parent, school, tutor center, employer, HR/L&D, government
+- GTM clarity: B2C subscription, school sales, enterprise learning budget, tutor marketplace, cohort/course sales
+- team understands education, pedagogy, curriculum, test prep, training ops, or learner behavior
+- validation via retention, completion, learning outcomes, repeat sessions, teacher/admin adoption, or learner satisfaction with context
 
 Red flags:
-- buyer vs learner unclear
-- outcome claims without measurement context
-- only surface-level engagement (time on app) without learning outcome evidence
-- AI/personalization claim not tied to actual learning design or pedagogical framework
-- no understanding of procurement cycles in institutional sales
+- outcome claims without measurement
+- only surface engagement metrics
+- unclear buyer vs learner
+- personalization/AI claims not tied to actual pedagogy
+- no understanding of institutional procurement where relevant
 
 ------------------------------
-COMMERCE
+HEALTHTECH_MEDTECH
 ------------------------------
 Interpretation focus:
-- transaction loop completeness
-- consumer adoption drivers
-- supply-demand interaction quality
-- merchant enablement or supplier relationship
-- repeat behavior and retention
-- conversion quality and funnel clarity
-- liquidity (for marketplaces)
-- monetization and unit economics
+- workflow fit in actual clinical or operational setting
+- trust, safety, and compliance awareness
+- buyer-user separation
+- adoption barriers in healthcare
+- operational or clinical value with evidence
 
 Strong signals:
-- problem tied to discovery, convenience, trust, conversion, utilization, access, or price transparency
-- why now tied to behavior shift, mobile/social adoption, fragmented supply, or platform migration
-- clear transaction or use loop from discovery to purchase to repeat
-- differentiation in curation, convenience, trust, logistics, niche community, or pricing
-- clear take rate / subscription / margin / service fee with volume context
-- if marketplace, clear seeding strategy, liquidity logic, and chicken-and-egg solution
-- team understands growth, commerce, ops, logistics, or community building
-- validation via repeat transactions, retention, cohort quality, supply-demand balance, GMV with context, and unit economics
+- problem tied to admin burden, coordination failure, clinical delay, appointment friction, record fragmentation, medication access, monitoring gaps, or diagnostic inefficiency
+- why now tied to staffing shortage, digitalization, reimbursement shifts, telehealth adoption, patient behavior change, or provider efficiency needs
+- clear workflow fit and adoption reason for the real end user
+- differentiation in usability, workflow integration, data quality, operational efficiency, patient convenience, or clinical support value
+- buyer clarity across clinic, hospital, pharmacy, payer, employer, patient, or provider ops
+- GTM / deployment logic appropriate for healthcare operations
+- team understands clinical workflow, provider ops, pharmacy, reimbursement, or healthcare data constraints
+- validation from pilot sites, clinician usage, patient engagement, operational improvement, repeat usage, or workflow outcome improvement
 
 Red flags:
-- no retention/frequency signal
-- marketplace with no liquidity logic or supply acquisition strategy
-- acquisition source is vague
-- large GMV with weak monetization or negative unit economics
-- no explanation of supply-side economics
+- clinical or diagnostic claims without evidence
+- buyer vs user unclear
+- implementation friction ignored
+- no awareness of regulatory or safety requirements where relevant
+- “AI diagnosis” or medical claims without validation context
 
 ------------------------------
-PROPTECH
+AGRI_FOODTECH
 ------------------------------
 Interpretation focus:
-- real estate workflow integration
-- transaction complexity awareness
-- regulatory and legal environment
-- offline-to-online bridge
-- stakeholder multiplicity (buyer, seller, agent, developer, landlord, tenant)
+- farmer, food, or supply-chain workflow realism
+- affordability and adoption in field or food operations
+- logistics, cold chain, traceability, and quality assurance where relevant
+- physical-world deployment constraints
+- economics across fragmented supply chains
 
 Strong signals:
-- problem tied to transaction friction, information asymmetry, property management inefficiency, construction delays, or tenant experience
-- why now tied to digitization of property records, urbanization, smart building adoption, or regulatory modernization
-- clear understanding of who the buyer is (B2B to developers, B2C to buyers/renters, B2B2C through agents)
-- differentiation in data quality, transaction speed, trust, or workflow digitization
-- team with real estate, construction, or property management experience
-- validation from property transactions, landlord/tenant adoption, agent usage, or developer partnerships
+- problem tied to yield, irrigation, input cost, farm labor, post-harvest loss, market access, spoilage, cold chain failure, quality control, or food safety
+- why now tied to climate pressure, food security, digitization, supply chain modernization, traceability demand, or efficiency pressure
+- clear understanding of user economics and real-world operating constraints
+- differentiation in accuracy, affordability, offline capability, logistics control, traceability depth, or quality assurance
+- team has agri, food supply chain, cold chain, operations, or domain relationships
+- validation from field trials, farmer usage, buyer adoption, reduced spoilage, traceability compliance, logistics performance, or repeat use
 
 Red flags:
-- no awareness of real estate transaction complexity
-- unclear who pays in the value chain
-- ignoring offline components of property transactions
-- no regulatory awareness
+- no understanding of farmer/buyer economics
+- urban/software assumptions applied to field operations without adaptation
+- no awareness of connectivity/infrastructure constraints
+- no operational explanation for cold chain, food safety, or traceability claims
+- pricing misaligned with user ability to pay
 
 ------------------------------
-CLEANTECH
+SAAS_ENTERPRISE_SOFTWARE
 ------------------------------
 Interpretation focus:
-- technical feasibility and readiness level
-- regulatory and policy environment
-- capital intensity and funding path
-- impact measurement
-- deployment and scale-up challenges
+- workflow pain specificity
+- ICP clarity and narrowness
+- buyer-user separation
+- measurable ROI or productivity value
+- integration with existing systems
+- adoption depth, retention, and expansion potential
 
 Strong signals:
-- problem tied to emissions, energy efficiency, waste, water, resource optimization with quantification
-- why now tied to climate regulation, carbon pricing, ESG mandates, technology cost curves
-- clear technology readiness level (TRL) and development pathway
-- differentiation in cost, efficiency, scalability, or regulatory advantage
-- team with deep technical/scientific expertise and industry connections
-- validation from pilot deployments, LOIs from industrial partners, grants, or regulatory approvals
+- problem tied to a specific business workflow with named steps, systems, or pain points
+- why now tied to automation demand, stack fragmentation, cost pressure, AI adoption, compliance burden, or operational inefficiency
+- clear workflow fit and sensible integration with existing tools/processes
+- measurable value proposition: time saved, errors reduced, reporting improved, cost reduced, sales improved, ops improved
+- motion clearly stated: PLG, founder-led sales, sales-led, channel-led, or enterprise motion with rationale
+- pricing logic such as seat / usage / subscription / enterprise license with justification
+- team understands enterprise workflow, implementation, product ops, developer workflow, or business software selling
+- validation with active accounts, repeat usage, retention/expansion, paid pilots, or strong operational outcomes
 
 Red flags:
-- technology claims without feasibility evidence
-- no awareness of capital requirements and funding path
-- impact claims without measurement methodology
-- ignoring deployment and scale-up challenges
-- no regulatory strategy
-
-------------------------------
-AGRITECH
-------------------------------
-Interpretation focus:
-- farmer/grower adoption reality
-- supply chain integration
-- seasonal and geographic factors
-- affordability and accessibility
-- offline/rural deployment challenges
-
-Strong signals:
-- problem tied to yield optimization, input costs, post-harvest loss, market access, or climate adaptation
-- why now tied to precision agriculture adoption, climate pressure, food security demand, or supply chain digitization
-- clear understanding of farmer economics and willingness/ability to pay
-- differentiation in accuracy, affordability, offline capability, or local crop/soil knowledge
-- team with agricultural domain knowledge or farmer relationships
-- validation from farm trials, yield improvement data, farmer retention, or cooperative adoption
-
-Red flags:
-- no understanding of farmer economics or adoption barriers
-- urban-centric solution applied to rural context without adaptation
-- no consideration of connectivity/infrastructure limitations
-- pricing misaligned with farmer ability to pay
-
-------------------------------
-LOGISTICS
-------------------------------
-Interpretation focus:
-- operational efficiency and cost optimization
-- network effects and scale dynamics
-- integration with existing logistics infrastructure
-- last-mile or cross-border complexity
-- real-time visibility and reliability
-
-Strong signals:
-- problem tied to routing inefficiency, visibility gaps, coordination failure, last-mile cost, or customs/compliance friction
-- why now tied to e-commerce growth, supply chain resilience demand, or regulatory modernization
-- clear understanding of logistics unit economics (cost per delivery, utilization rate)
-- differentiation in route optimization, network density, reliability, or integration depth
-- team with logistics operations or supply chain experience
-- validation from shipment volume, cost reduction data, shipper/carrier retention, or on-time delivery improvement
-
-Red flags:
-- no understanding of logistics unit economics
-- ignoring physical infrastructure requirements
-- no strategy for driver/carrier acquisition and retention
-- marketplace model without network density logic
-
-------------------------------
-FOODTECH
-------------------------------
-Interpretation focus:
-- food safety and quality assurance
-- supply chain and cold chain requirements
-- consumer behavior and repeat purchase
-- unit economics in food (perishability, margins)
-- regulatory compliance (food safety, labeling)
-
-Strong signals:
-- problem tied to food waste, access, quality, convenience, nutrition, or supply chain inefficiency
-- why now tied to health awareness, delivery adoption, sustainability demand, or food safety regulation
-- clear understanding of food economics (COGS, shelf life, delivery cost)
-- differentiation in taste/quality, convenience, health value, sustainability, or supply chain innovation
-- team with food industry, culinary, food science, or supply chain experience
-- validation from repeat purchase rates, retention, unit economics, food safety certifications, or retail partnerships
-
-Red flags:
-- no awareness of food margins and perishability
-- ignoring cold chain or food safety requirements
-- no repeat purchase or retention data
-- unit economics that don't account for food waste
-
-------------------------------
-DEEPTECH
-------------------------------
-Interpretation focus:
-- scientific/technical validity
-- technology readiness level (TRL)
-- IP strategy and protection
-- time-to-market and capital requirements
-- team scientific credentials
-
-Strong signals:
-- problem tied to fundamental technical limitation in an existing industry
-- why now tied to scientific breakthrough, compute cost reduction, material science advance, or enabling platform maturity
-- clear TRL with defined milestones for progression
-- differentiation rooted in patent, proprietary process, scientific breakthrough, or unique data
-- team with PhD-level expertise, publications, or deep industry R&D experience
-- validation from scientific publications, patents filed/granted, government grants, corporate R&D partnerships, or prototype performance data
-
-Red flags:
-- scientific claims without peer review or third-party validation
-- no IP strategy
-- unrealistic timeline for technology development
-- no awareness of capital requirements for deeptech development
-- team lacks scientific depth for the claimed breakthrough
+- ICP too broad
+- buyer and user unclear
+- moat is only “AI” or “data” without specifics
+- usage claim without retention context
+- no explanation of sales cycle, implementation, or buyer decision process
 
 ------------------------------
 OTHER
@@ -923,7 +818,7 @@ OTHER
 When main_industry is classified as OTHER:
 - Use only the core rubric without any industry-specific overlay
 - Apply stage profile normally
-- Note in operational_notes that no industry overlay was applied
+- Note in operational_notes that no overlay was applied
 - Evaluate using general business logic for all criteria
 - Pay extra attention to the core rubric cap rules as the primary quality control
 
@@ -935,67 +830,84 @@ Use the following allowed subindustries when classification confidence is suffic
 Each subindustry includes interpretation refinements beyond the parent industry overlay.
 
 FINTECH:
-- PAYMENTS_MERCHANT_INFRASTRUCTURE: Focus on transaction volume quality, merchant churn, integration depth, PCI/regulatory compliance, interchange economics
-- LENDING_CREDIT_INFRASTRUCTURE: Focus on credit risk model quality, default rates, portfolio quality, regulatory licensing, funding source diversity
-- SME_FINANCE_ACCOUNTING_AUTOMATION: Focus on workflow fit for SME context, pricing sensitivity, churn drivers, integration with existing accounting tools
-- WEALTHTECH_PERSONAL_FINANCE: Focus on AUM growth quality, user trust and retention, regulatory compliance, fee transparency, behavioral engagement
-- INSURTECH: Focus on underwriting innovation, claims processing efficiency, distribution channel, actuarial credibility, regulatory approval status
+- 101_PAYMENTS_DIGITAL_WALLETS:
+  Focus on transaction quality, merchant adoption, payment flow integration, trust, settlement/reconciliation, QR/payment rails, and repeat usage.
+- 102_ONLINE_LENDING_CREDIT:
+  Focus on underwriting logic, default risk, approval quality, credit scoring credibility, funding dependency, and regulatory sensitivity.
+- 103_BLOCKCHAIN_DIGITAL_ASSETS:
+  Focus on wallet/security infrastructure, asset custody or enablement logic, token utility realism, compliance awareness, and infrastructure differentiation over hype.
+- 104_INSURTECH:
+  Focus on underwriting innovation, claims automation, distribution channel logic, operational efficiency, and insurer/customer trust.
+- 105_PERSONAL_FINANCE_INVESTING:
+  Focus on user trust, retention, engagement depth, financial behavior change, fee transparency, and regulatory sensitivity.
 
-B2B_SAAS:
-- HORIZONTAL_PRODUCTIVITY_COLLABORATION_SAAS: Focus on adoption breadth vs depth, network effects within organizations, integration ecosystem, switching costs
-- VERTICAL_SAAS: Focus on industry-specific workflow depth, domain expertise, compliance features, total addressable market within the vertical
-- SALES_MARKETING_REVENUE_SAAS: Focus on measurable ROI, attribution clarity, integration with CRM/marketing stack, buyer sophistication
-- HR_PEOPLEOPS_TRAINING_SAAS: Focus on compliance requirements, employee adoption vs buyer decision, integration with payroll/HRIS, data sensitivity
-- DEVTOOLS_ITOPS_SECURITY_SAAS: Focus on developer adoption patterns, open-source competition, deployment model, security certification requirements
-
-HEALTHTECH:
-- CARE_DELIVERY_VIRTUAL_CARE: Focus on clinical quality evidence, patient outcomes, reimbursement model, provider adoption, platform reliability
-- CLINICAL_WORKFLOW_PROVIDER_OPERATIONS: Focus on EHR integration, clinician time savings, regulatory compliance, implementation effort, workflow disruption
-- DIAGNOSTICS_CLINICAL_DECISION_SUPPORT: Focus on accuracy/sensitivity/specificity data, clinical validation, regulatory pathway (FDA/CE), liability framework
-- MENTAL_HEALTH_BEHAVIORAL_CARE: Focus on therapeutic efficacy evidence, engagement depth, clinical supervision model, privacy and stigma sensitivity
-- REMOTE_MONITORING_CHRONIC_CARE: Focus on device integration, patient adherence, clinical alert quality, care coordination, reimbursement pathway
+ECOMMERCE:
+- 201_B2C_MARKETPLACE:
+  Focus on consumer demand generation, seller liquidity, repeat purchase, trust, assortment, and marketplace flywheel realism.
+- 202_B2B_COMMERCE:
+  Focus on procurement workflow fit, buyer frequency, catalog/order management, payment terms, merchant/supplier adoption, and operational switching friction.
+- 203_SOCIAL_COMMERCE:
+  Focus on creator/community-driven discovery, content-to-commerce conversion, seller enablement, repeat behavior, and platform dependency risk.
+- 204_COMMERCE_FULFILLMENT_DELIVERY:
+  Focus on merchant enablement, fulfillment workflow, last-mile efficiency for commerce orders, seller ops integration, and order economics.
+- 205_FOOD_GROCERY_DELIVERY:
+  Focus on order frequency, basket economics, fulfillment speed, perishability/logistics quality, and retention in a convenience-driven model.
 
 EDTECH:
-- K12_LEARNING_SCHOOL_PLATFORMS: Focus on school procurement cycle, teacher adoption, curriculum alignment, parental engagement, student safety
-- TEST_PREP_LANGUAGE_LEARNING: Focus on measurable score/proficiency improvement, learner retention, competitive differentiation, pricing sensitivity
-- HIGHER_EDUCATION_STUDENT_SUCCESS: Focus on institutional procurement, enrollment/retention impact, integration with LMS, data privacy
-- CORPORATE_TRAINING_WORKFORCE_UPSKILLING: Focus on L&D budget alignment, skill gap measurement, completion rates, manager/HR adoption, ROI evidence
-- TUTORING_LEARNING_MARKETPLACE: Focus on tutor supply quality, matching algorithm, session completion, repeat booking rate, pricing transparency
+- 301_LANGUAGE_LEARNING:
+  Focus on proficiency improvement, retention, repeat sessions, speaking/practice depth, motivation mechanics, and learner habit formation.
+- 302_K12_LEARNING_SUPPORT:
+  Focus on curriculum/exam fit, parent-student-buyer dynamics, repeat usage, measurable learning support, and trust/safety expectations.
+- 303_MOOCS_SKILLS_COURSES:
+  Focus on course completion, job/skill outcome relevance, learner persistence, content differentiation, and willingness to pay.
+- 304_CODING_STEM_EDUCATION:
+  Focus on practical skill progression, curriculum structure, hands-on learning depth, learner retention, and evidence of meaningful learning outcomes.
+- 305_TUTOR_MATCHING_PLATFORMS:
+  Focus on tutor supply quality, trust, matching efficiency, booking completion, repeat booking behavior, and platform liquidity.
 
-COMMERCE:
-- CONSUMER_MARKETPLACE_DISCOVERY: Focus on liquidity metrics, take rate sustainability, buyer/seller retention, discovery quality, trust mechanisms
-- ON_DEMAND_LOCAL_SERVICES_COMMERCE: Focus on supply reliability, delivery/service time, geographic density, repeat usage frequency, local unit economics
-- ECOMMERCE_ENABLEMENT_MERCHANT_TOOLS: Focus on merchant adoption, GMV enablement, integration simplicity, merchant churn, value-add vs commoditized features
-- SOCIAL_COMMERCE_CREATOR_LED_COMMERCE: Focus on creator acquisition/retention, content-to-commerce conversion, community engagement, platform dependency risk
-- B2B_COMMERCE_PROCUREMENT: Focus on procurement workflow fit, approval process integration, catalog management, order frequency, payment terms
+HEALTHTECH_MEDTECH:
+- 401_TELEHEALTH:
+  Focus on virtual care workflow, provider adoption, patient usage, trust, continuity of care, and reimbursement/operational realism.
+- 402_APPOINTMENT_HEALTH_RECORDS:
+  Focus on clinic workflow fit, scheduling efficiency, record management, staff adoption, integration burden, and operational ROI.
+- 403_ONLINE_PHARMACY:
+  Focus on prescription fulfillment logic, medication ordering workflow, trust/compliance, repeat medication behavior, and logistics execution.
+- 404_WEARABLES_HEALTH_TRACKING:
+  Focus on tracking usefulness, adherence, consumer retention, signal quality, and whether health data leads to meaningful behavior or monitoring outcomes.
+- 405_AI_IN_DIAGNOSIS_CLINICAL_DECISION_SUPPORT:
+  Focus on accuracy/validation evidence, clinical workflow integration, explainability/trust, safety awareness, and regulatory sensitivity.
 
-PROPTECH:
-- PROPERTY_MANAGEMENT_OPERATIONS: Focus on landlord/PM adoption, tenant satisfaction, maintenance workflow, rent collection efficiency
-- REAL_ESTATE_TRANSACTION_PLATFORM: Focus on transaction volume, agent adoption, lead quality, closing rate improvement, regulatory compliance
-- CONSTRUCTION_TECH: Focus on project timeline reduction, cost accuracy, subcontractor coordination, safety compliance
-- SMART_BUILDING_IOT: Focus on sensor integration, energy savings evidence, building owner ROI, maintenance prediction accuracy
+AGRI_FOODTECH:
+- 501_PRECISION_AGRICULTURE:
+  Focus on agronomic accuracy, farmer ROI, crop/region specificity, sensor/analytics usefulness, and field deployment practicality.
+- 502_FARM_AUTOMATION_ROBOTICS:
+  Focus on labor replacement value, technical feasibility in farm conditions, capex/opex logic, operational reliability, and deployment realism.
+- 503_FARMER_TO_MARKET_PLATFORMS:
+  Focus on farmer-buyer matching, price transparency, repeat trade, liquidity, logistics/payment coordination, and fragmented-supply execution.
+- 504_COLD_CHAIN_INFRASTRUCTURE:
+  Focus on temperature control reliability, spoilage reduction, logistics integration, operational visibility, and infrastructure economics.
+- 505_TRACEABILITY_FOOD_SAFETY:
+  Focus on provenance depth, verification credibility, compliance utility, buyer trust, workflow integration, and whether traceability leads to real operational value.
 
-CLEANTECH:
-- RENEWABLE_ENERGY_STORAGE: Focus on LCOE comparison, grid integration, storage efficiency, regulatory incentives, project pipeline
-- CARBON_CAPTURE_OFFSET: Focus on capture cost per ton, measurement/verification methodology, buyer demand, regulatory credit value
-- CIRCULAR_ECONOMY_WASTE: Focus on waste stream specificity, processing cost, output market demand, regulatory compliance, scale pathway
-- SUSTAINABLE_MATERIALS: Focus on performance vs conventional materials, cost premium acceptance, supply chain readiness, certification
-
-AGRITECH:
-- PRECISION_FARMING_IOT: Focus on sensor accuracy, farmer ROI, crop/region specificity, connectivity requirements, data privacy
-- AGRI_MARKETPLACE_SUPPLY_CHAIN: Focus on farmer-buyer matching, price transparency, logistics integration, payment facilitation, seasonal dynamics
-- CROP_LIVESTOCK_BIOTECH: Focus on scientific validation, regulatory pathway, field trial results, IP protection, time-to-market
-
-LOGISTICS:
-- LAST_MILE_DELIVERY: Focus on cost per delivery, delivery time, driver/fleet management, route density, customer satisfaction
-- FREIGHT_SUPPLY_CHAIN: Focus on shipper/carrier matching, rate transparency, utilization improvement, cross-border complexity
-- WAREHOUSE_FULFILLMENT: Focus on throughput improvement, accuracy rate, integration with e-commerce, automation ROI
+SAAS_ENTERPRISE_SOFTWARE:
+- 601_CRM_SALES_TOOLS:
+  Focus on pipeline/workflow fit, sales team adoption, measurable revenue or efficiency ROI, CRM integration, and stickiness.
+- 602_ERP_OPERATIONS:
+  Focus on operational workflow depth, implementation complexity, switching friction, cross-function integration, and back-office value.
+- 603_MARKETING_TECH:
+  Focus on measurable attribution/ROI, campaign workflow fit, integration with marketing stack, and evidence of value beyond generic automation.
+- 604_DEVELOPER_TOOLS_DEVOPS:
+  Focus on developer workflow adoption, technical differentiation, implementation friction, integration depth, and repeat usage/retention.
+- 605_DATA_ANALYTICS_BI:
+  Focus on decision-making value, data integration, dashboard/reporting usefulness, buyer-user distinction, and ongoing usage depth.
 
 Rules:
 - The subindustry key must belong to the selected main industry.
-- If no strong fit is found, keep main industry only and leave subindustry as null.
+- If no strong fit is found, keep the main industry only and leave subindustry as null.
 - Use subindustry interpretation refinements to evaluate evidence quality more precisely.
 - Subindustry refinements may not override core rubric caps or global guardrails.
+- If the startup clearly belongs to one of the 6 supported main industries but does not fit any listed subindustry with sufficient confidence, apply only the core rubric and stage profile, and do not apply parent industry overlay or subindustry overlay.
+
 ==================================================
 H. MERGE ORDER AND PRECEDENCE
 ==================================================
@@ -1003,8 +915,11 @@ H. MERGE ORDER AND PRECEDENCE
 Build the effective rubric in this order:
 1. load core rubric
 2. apply selected stage profile
-3. apply selected industry overlay
-4. apply selected subindustry overlay if available
+3. if a supported main_industry has a confidently resolved listed subindustry:
+   - apply selected industry overlay
+   - apply selected subindustry overlay
+4. otherwise:
+   - apply no industry or subindustry overlay
 5. compute effective weights
 
 Precedence:
@@ -1024,7 +939,8 @@ Conflict rules:
 - More specific overlays may refine interpretation, proof types, and red flags.
 - More specific overlays may NOT override no-assumption, anti-vanity, or source restriction guardrails.
 - Stage profile controls maturity expectation and has priority over industry/subindustry when deciding required evidence level.
-- If an industry overlay demands evidence that is unreasonable for the stage (e.g., requiring revenue data at IDEA stage), stage profile takes precedence.
+- If an industry or subindustry overlay demands evidence that is unreasonable for the stage (e.g., requiring revenue data at IDEA stage), stage profile takes precedence.
+- If the startup belongs to a supported main industry but no listed subindustry is confidently resolvable, apply only the core rubric and stage profile.
 
 ==================================================
 I. EFFECTIVE WEIGHTS
@@ -1093,8 +1009,11 @@ Step 1: Resolve classification context
 Step 2: Build effective rubric
 - load core rubric
 - apply stage profile
-- apply industry overlay
-- apply subindustry overlay if available
+- if a supported main_industry has a confidently resolved listed subindustry:
+  - apply industry overlay
+  - apply subindustry overlay
+- otherwise:
+  - apply no overlay
 - compute effective weights
 
 Step 3: Extract evidence map
@@ -1105,7 +1024,7 @@ Step 3: Extract evidence map
 Step 4: Generate raw criterion scores
 - score each criterion from 0 to 10 based only on evidence
 - use stage-aware expectations
-- use industry/subindustry-aware interpretation
+- use industry/subindustry-aware interpretation only when overlay application is allowed
 - reference calibration examples to anchor scores
 
 Step 5: Apply caps and penalties
@@ -1403,7 +1322,7 @@ For each criterion, return:
 - top_concerns (max 5, ranked by severity, with evidence reference)
 - overall_explanation (narrative summary)
 
-5. recommendations (NEW)
+5. recommendations
 - list of max 5 recommendations, each with:
   - category
   - priority
@@ -1411,7 +1330,7 @@ For each criterion, return:
   - rationale
   - expected_impact
 
-6. key_questions (NEW)
+6. key_questions
 - max 5 questions the evaluator should ask the startup to resolve evidence gaps or concerns
 - each question must connect to a specific criterion and concern
 
@@ -1420,6 +1339,7 @@ For each criterion, return:
 - overlay applied or not applied and why
 - any evidence gaps that affected multiple criteria
 - document quality observations
+- explicit note when a supported main industry was identified but no listed subindustry was confidently resolvable, so no overlay was applied
 
 ==================================================
 U. SCORING CONSISTENCY RULES (NEW SECTION)
@@ -1459,6 +1379,8 @@ Always:
 - keep the evaluation auditable and deterministic in spirit
 - reference calibration examples to anchor scores
 - cross-reference claims between Pitch Deck and Business Plan
+- apply industry/subindustry overlays only when the selected supported main industry has a confidently resolved listed subindustry
+- if main_industry is OTHER, or if no listed subindustry is confidently resolvable under a supported main industry, use only the core rubric and stage profile
 
 Never:
 - hallucinate customers, metrics, pilots, revenue, or partnerships

@@ -89,7 +89,7 @@ async def run(state: GraphState) -> Dict[str, Any]:
     try:
         res = await llm.generate_structured_async(
             prompt=prompt, response_schema=FactExtractionResult, model_name="gemini-2.5-flash",
-            timeout=90.0)
+            timeout=40.0)
         facts = res.items or []
         claims_candidate = res.candidate_claims or []
     except Exception as error:

@@ -23,10 +23,6 @@ from src.modules.recommendation.application.services.llm_reranker import Recomme
 from src.modules.recommendation.application.services.reason_renderer import RecommendationReasonRenderer
 from src.modules.recommendation.application.services.scoring import RecommendationScoringService
 from src.modules.recommendation.infrastructure.repositories.repo_factory import get_recommendation_repository
-from src.shared.observability.metrics import (
-    RECO_CANDIDATE_POOL_SIZE,
-    RECO_WARNING_FLAGS_TOTAL,
-)
 
 
 class RecommendationEngine:
@@ -164,7 +160,6 @@ class RecommendationEngine:
 
         scored_candidates.sort(
             key=lambda item: item["combined_pre_llm_score"], reverse=True)
-        RECO_CANDIDATE_POOL_SIZE.observe(len(scored_candidates))
         candidate_set = scored_candidates[: min(max(top_n, 8), 10)]
         candidate_count = len(candidate_set)
 
@@ -486,8 +481,6 @@ class RecommendationEngine:
             warnings.append("startup_ai_embedding_missing")
         if investor.structured_preferences.ai_score_importance == "high" and startup.ai_profile.ai_overall_score is None:
             warnings.append("ai_score_high_importance_missing")
-        for w in warnings:
-            RECO_WARNING_FLAGS_TOTAL.labels(flag=w).inc()
         return warnings
 
     @staticmethod

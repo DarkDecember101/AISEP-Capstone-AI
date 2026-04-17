@@ -21,6 +21,62 @@ from src.modules.evaluation.application.dto.canonical_schema import (
 
 logger = setup_logger("deterministic_scorer")
 
+# Approved stage weight profiles — must stay in sync with master_prompt.txt Stage Profiles section.
+# Each profile sums to 100.0.
+STAGE_WEIGHT_PROFILES: dict[str, dict[str, float]] = {
+    "IDEA": {
+        "Problem_&_Customer_Pain": 20.0,
+        "Market_Attractiveness_&_Timing": 15.0,
+        "Solution_&_Differentiation": 20.0,
+        "Business_Model_&_Go_to_Market": 15.0,
+        "Team_&_Execution_Readiness": 15.0,
+        "Validation_Traction_Evidence_Quality": 15.0,
+    },
+    "MVP": {
+        "Problem_&_Customer_Pain": 18.0,
+        "Market_Attractiveness_&_Timing": 14.0,
+        "Solution_&_Differentiation": 20.0,
+        "Business_Model_&_Go_to_Market": 16.0,
+        "Team_&_Execution_Readiness": 14.0,
+        "Validation_Traction_Evidence_Quality": 18.0,
+    },
+    "PRE_SEED": {
+        "Problem_&_Customer_Pain": 16.0,
+        "Market_Attractiveness_&_Timing": 14.0,
+        "Solution_&_Differentiation": 18.0,
+        "Business_Model_&_Go_to_Market": 18.0,
+        "Team_&_Execution_Readiness": 14.0,
+        "Validation_Traction_Evidence_Quality": 20.0,
+    },
+    "SEED": {
+        "Problem_&_Customer_Pain": 14.0,
+        "Market_Attractiveness_&_Timing": 14.0,
+        "Solution_&_Differentiation": 17.0,
+        "Business_Model_&_Go_to_Market": 20.0,
+        "Team_&_Execution_Readiness": 15.0,
+        "Validation_Traction_Evidence_Quality": 20.0,
+    },
+    "GROWTH": {
+        "Problem_&_Customer_Pain": 12.0,
+        "Market_Attractiveness_&_Timing": 13.0,
+        "Solution_&_Differentiation": 15.0,
+        "Business_Model_&_Go_to_Market": 22.0,
+        "Team_&_Execution_Readiness": 13.0,
+        "Validation_Traction_Evidence_Quality": 25.0,
+    },
+}
+
+# Guard: every approved stage profile must sum to exactly 100.
+# This assertion runs at import time so a mis-edit fails loudly before
+# any evaluation request is processed.
+for _stage, _profile in STAGE_WEIGHT_PROFILES.items():
+    _sum = sum(_profile.values())
+    assert abs(_sum - 100.0) < 0.001, (
+        f"STAGE_WEIGHT_PROFILES['{_stage}'] sums to {_sum}, expected 100.0. "
+        f"Fix deterministic_scorer.py before starting the worker."
+    )
+del _stage, _profile, _sum
+
 
 def sanitize_page_refs(units: List[EvidenceUnit], total_pages: int, warnings: List[str]) -> List[EvidenceLocation]:
     sanitized = []
@@ -80,20 +136,14 @@ class DeterministicScoringService:
     ) -> DeterministicScoringResult:
         logger.info("[Step 4] Running Deterministic Scoring...")
 
-        stage = classification.stage.value.upper() if classification.stage.value else "MVP"
+        stage = (classification.stage.value or "MVP").upper().strip()
 
-        weights = {
-            "Problem_&_Customer_Pain": 20.0,
-            "Market_Attractiveness_&_Timing": 15.0,
-            "Solution_&_Differentiation": 15.0,
-            "Business_Model_&_Go_to_Market": 15.0,
-            "Team_&_Execution_Readiness": 20.0,
-            "Validation_Traction_Evidence_Quality": 15.0
-        }
-
-        if stage in ["GROWTH", "SEED"]:
-            weights["Validation_Traction_Evidence_Quality"] = 25.0
-            weights["Problem_&_Customer_Pain"] = 10.0
+        weights = STAGE_WEIGHT_PROFILES.get(
+            stage, STAGE_WEIGHT_PROFILES["MVP"]).copy()
+        if stage not in STAGE_WEIGHT_PROFILES:
+            self.warnings.append(
+                f"Unknown stage '{stage}' — falling back to MVP weight profile."
+            )
 
         final_criteria = []
         overall_score = 0.0

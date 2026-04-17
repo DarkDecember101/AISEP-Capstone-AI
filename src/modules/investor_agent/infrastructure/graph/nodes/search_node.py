@@ -3,7 +3,6 @@ from typing import Dict, Any, List
 import logging
 from src.modules.investor_agent.application.dto.state import GraphState, SearchResult
 from src.shared.config.settings import settings
-from src.shared.observability.provider_tracker import track_provider_async
 from tavily import AsyncTavilyClient
 
 logger = logging.getLogger(__name__)
@@ -45,15 +44,8 @@ async def run(state: GraphState) -> Dict[str, Any]:
             return {"search_results": results, "processing_warnings": warnings}
 
         tavily_client = AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
-        tasks = []
-        for q in queries:
-            async def _search_one(_q=q):
-                async with track_provider_async("tavily_search"):
-                    return await tavily_client.search(
-                        query=_q, search_depth="advanced", max_results=3,
-                        include_domains=[], exclude_domains=[],
-                    )
-            tasks.append(_search_one())
+        tasks = [tavily_client.search(query=q, search_depth="advanced", max_results=3, include_domains=[
+        ], exclude_domains=[]) for q in queries]
 
         logger.info("Search node: query_count=%s queries=%s",
                     len(queries), queries)

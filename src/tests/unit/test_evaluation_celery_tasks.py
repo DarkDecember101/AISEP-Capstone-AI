@@ -257,7 +257,7 @@ class TestSubmitEvaluationFlow:
 
         mock_task_obj.delay.assert_called_once()
         assert response.status == "queued"
-        assert response.message == "Evaluation run initialized."
+        assert response.evaluation_mode == "pitch_deck_only"
         assert session.closed
 
     def test_no_threading_import_in_submit(self):

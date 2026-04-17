@@ -6,18 +6,17 @@ from src.shared.persistence.models.evaluation_models import (
     EvaluationRun, EvaluationDocument, EvaluationCriteriaResult, EvaluationLog
 )
 from src.modules.evaluation.application.dto.evaluation_schema import (
-    SubmitEvaluationRequest, SubmitEvaluationResponse, DocumentInputSchema, LLMDutchEvaluationResult
+    SubmitEvaluationRequest, SubmitEvaluationResponse, DocumentStatusSchema,
 )
 
 logger = logging.getLogger("submit_evaluation")
 
 
 def submit_evaluation(request: SubmitEvaluationRequest) -> SubmitEvaluationResponse:
-    # 1. Start session
     session = next(get_session())
 
     try:
-        # 2. Check if there's an active run for this startup and cancel them
+        # Cancel any active runs for this startup
         active_runs = session.query(EvaluationRun).filter(
             EvaluationRun.startup_id == request.startup_id,
             EvaluationRun.status.in_(
@@ -29,22 +28,29 @@ def submit_evaluation(request: SubmitEvaluationRequest) -> SubmitEvaluationRespo
             active_run.failure_reason = "Superseded by a new evaluation request."
         session.commit()
 
-        # 3. Create run
+        # Derive evaluation mode from documents
+        evaluation_mode = request.derived_evaluation_mode
+
+        # Create run
         run = EvaluationRun(
             startup_id=request.startup_id,
-            status="queued"
+            status="queued",
+            provided_stage=request.provided_stage,
+            provided_main_industry=request.provided_main_industry,
+            provided_subindustry=request.provided_subindustry,
+            evaluation_mode=evaluation_mode,
         )
         session.add(run)
         session.commit()
         session.refresh(run)
 
-        # Add initial log
         session.add(EvaluationLog(
             evaluation_run_id=run.id, step="submit", status="ok",
-            message="Created new evaluation run",
+            message=f"Created new evaluation run (mode={evaluation_mode})",
         ))
 
-        # 4. Add documents
+        # Add documents
+        doc_statuses: list[DocumentStatusSchema] = []
         for doc in request.documents:
             eval_doc = EvaluationDocument(
                 evaluation_run_id=run.id,
@@ -53,20 +59,24 @@ def submit_evaluation(request: SubmitEvaluationRequest) -> SubmitEvaluationRespo
                 source_file_url_or_path=doc.file_url_or_path
             )
             session.add(eval_doc)
+            doc_statuses.append(DocumentStatusSchema(
+                document_id=doc.document_id,
+                document_type=doc.document_type,
+                status="queued",
+            ))
 
         session.commit()
 
-        # 5. Dispatch Celery task (async – API returns immediately)
+        # Dispatch Celery task
         from src.modules.evaluation.workers.tasks import process_evaluation_run_task
 
         task_result = process_evaluation_run_task.delay(run.id)
 
         logger.info(
-            "[submit] Enqueued Celery task %s for evaluation_run_id=%s",
-            task_result.id, run.id,
+            "[submit] Enqueued Celery task %s for evaluation_run_id=%s mode=%s",
+            task_result.id, run.id, evaluation_mode,
         )
 
-        # Persist the Celery task ID for observability
         session.add(EvaluationLog(
             evaluation_run_id=run.id, step="enqueue", status="ok",
             message=f"Celery task enqueued: {task_result.id}",
@@ -75,8 +85,10 @@ def submit_evaluation(request: SubmitEvaluationRequest) -> SubmitEvaluationRespo
 
         return SubmitEvaluationResponse(
             evaluation_run_id=run.id,
+            startup_id=request.startup_id,
             status="queued",
-            message="Evaluation run initialized."
+            evaluation_mode=evaluation_mode,
+            documents=doc_statuses,
         )
 
     finally:

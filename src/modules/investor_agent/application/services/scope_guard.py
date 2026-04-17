@@ -13,14 +13,44 @@ SUPPORTED_INTENTS = {
     "mixed",
 }
 
-OUT_OF_SCOPE_REFUSAL = (
-    "I’m designed to help investors with market trends, regulation, news, and competitor context. "
-    "I can’t help with this query."
+OUT_OF_SCOPE_REFUSAL_VI = (
+    "Mình tập trung hỗ trợ các câu hỏi liên quan đến phân tích đầu tư startup "
+    "và market research cho nhà đầu tư. Nội dung bạn hỏi hiện nằm ngoài phạm vi đó."
+)
+OUT_OF_SCOPE_REFUSAL_EN = (
+    "I'm focused on questions related to startup investment analysis "
+    "and market research for investors. Your question is outside that scope."
 )
 
-OUT_OF_SCOPE_CAVEAT = (
-    "This query is outside investor-research scope (market trends, regulation, news, competitor context)."
+OUT_OF_SCOPE_CAVEAT_VI = (
+    "Câu hỏi nằm ngoài phạm vi phân tích đầu tư "
+    "(xu hướng thị trường, quy định, tin tức, phân tích đối thủ)."
 )
+OUT_OF_SCOPE_CAVEAT_EN = (
+    "This query is outside investor-research scope "
+    "(market trends, regulation, news, competitor context)."
+)
+
+# Keep old names as defaults (Vietnamese) for backward compat
+OUT_OF_SCOPE_REFUSAL = OUT_OF_SCOPE_REFUSAL_VI
+OUT_OF_SCOPE_CAVEAT = OUT_OF_SCOPE_CAVEAT_VI
+
+_VIETNAMESE_MARKERS = re.compile(
+    r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]"
+)
+
+
+def _is_vietnamese(text: str) -> bool:
+    """Lightweight heuristic: True if text contains Vietnamese diacritics."""
+    return bool(_VIETNAMESE_MARKERS.search(text or ""))
+
+
+def get_refusal(query: str = "") -> str:
+    return OUT_OF_SCOPE_REFUSAL_VI if _is_vietnamese(query) else OUT_OF_SCOPE_REFUSAL_EN
+
+
+def get_caveat(query: str = "") -> str:
+    return OUT_OF_SCOPE_CAVEAT_VI if _is_vietnamese(query) else OUT_OF_SCOPE_CAVEAT_EN
 
 
 @dataclass
@@ -177,12 +207,12 @@ def detect_out_of_scope(query: str) -> ScopeDecision:
     )
 
 
-def build_out_of_scope_payload() -> dict:
+def build_out_of_scope_payload(query: str = "") -> dict:
     return {
         "intent": "out_of_scope",
-        "final_answer": OUT_OF_SCOPE_REFUSAL,
+        "final_answer": get_refusal(query),
         "references": [],
-        "caveats": [OUT_OF_SCOPE_CAVEAT],
+        "caveats": [get_caveat(query)],
         "writer_notes": ["scope_guard_refusal"],
         "processing_warnings": ["out_of_scope_query"],
         "grounding_summary": {

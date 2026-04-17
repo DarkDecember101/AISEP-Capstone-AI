@@ -1,6 +1,10 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Optional, Dict, Any, Literal  # noqa: F811
 from pydantic import field_validator
+
+_NULL_LIKE: frozenset = frozenset(
+    {"null", "none", "n/a", "na", "unknown", "undefined", ""})
+_ALLOWED_DOC_TYPES: frozenset = frozenset({"pitch_deck", "business_plan"})
 
 
 class DocumentInputSchema(BaseModel):
@@ -8,10 +12,23 @@ class DocumentInputSchema(BaseModel):
     document_type: str = Field(..., description="pitch_deck or business_plan")
     file_url_or_path: str
 
+    @field_validator("document_type")
+    @classmethod
+    def validate_document_type(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in _ALLOWED_DOC_TYPES:
+            raise ValueError(
+                f"document_type must be one of {sorted(_ALLOWED_DOC_TYPES)}, got '{v}'"
+            )
+        return v
+
 
 class SubmitEvaluationRequest(BaseModel):
     startup_id: str
     documents: List[DocumentInputSchema]
+    provided_stage: Optional[str] = None
+    provided_main_industry: Optional[str] = None
+    provided_subindustry: Optional[str] = None
 
     @field_validator("startup_id")
     @classmethod
@@ -21,11 +38,84 @@ class SubmitEvaluationRequest(BaseModel):
             raise ValueError("startup_id must not be blank")
         return cleaned
 
+    @model_validator(mode="after")
+    def validate_documents_and_normalize(self):
+        # --- normalize null-like subindustry ---
+        if self.provided_subindustry is not None:
+            if str(self.provided_subindustry).strip().lower() in _NULL_LIKE:
+                object.__setattr__(self, "provided_subindustry", None)
+
+        # --- documents validation ---
+        if not self.documents:
+            raise ValueError("documents must contain at least 1 document")
+
+        type_counts: dict[str, int] = {}
+        for doc in self.documents:
+            type_counts[doc.document_type] = type_counts.get(
+                doc.document_type, 0) + 1
+
+        if type_counts.get("pitch_deck", 0) > 1:
+            raise ValueError("Only 1 pitch_deck allowed per evaluation run")
+        if type_counts.get("business_plan", 0) > 1:
+            raise ValueError("Only 1 business_plan allowed per evaluation run")
+
+        return self
+
+    @property
+    def derived_evaluation_mode(self) -> str:
+        types = {d.document_type for d in self.documents}
+        if types == {"pitch_deck", "business_plan"}:
+            return "combined"
+        if "pitch_deck" in types:
+            return "pitch_deck_only"
+        return "business_plan_only"
+
+
+# --- Submit response ---
+
+class DocumentStatusSchema(BaseModel):
+    document_id: str
+    document_type: str
+    status: str
+
 
 class SubmitEvaluationResponse(BaseModel):
     evaluation_run_id: int
+    startup_id: str
     status: str
-    message: str
+    evaluation_mode: str
+    documents: List[DocumentStatusSchema]
+
+
+# --- Status response ---
+
+class EvaluationStatusResponse(BaseModel):
+    evaluation_run_id: int
+    startup_id: str
+    status: str
+    evaluation_mode: Optional[str] = None
+    documents: List[Dict[str, Any]] = []
+    has_pitch_deck_result: bool = False
+    has_business_plan_result: bool = False
+    has_merged_result: bool = False
+    # Merge lifecycle signal:
+    # not_applicable | waiting_for_sources | fallback_source_only |
+    # merged | merge_failed | merge_disabled | null (legacy/unknown)
+    merge_status: Optional[str] = None
+
+
+# --- Report envelope ---
+
+class ReportEnvelope(BaseModel):
+    """Wraps a canonical report with metadata about how it was produced."""
+    report_mode: str  # pitch_deck_only | business_plan_only | merged | source
+    evaluation_mode: str  # pitch_deck_only | business_plan_only | combined
+    has_merged_result: bool
+    available_sources: List[str]
+    source_document_type: Optional[str] = None  # set when report_mode=source
+    # Merge lifecycle signal — mirrors EvaluationRun.merge_status
+    merge_status: Optional[str] = None
+    report: Dict[str, Any]  # the actual CanonicalEvaluationResult dict
 
 
 class CriterionResultSchema(BaseModel):

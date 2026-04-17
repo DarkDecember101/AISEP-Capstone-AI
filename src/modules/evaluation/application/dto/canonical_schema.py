@@ -24,6 +24,7 @@ class EvidenceLocation(BaseModel):
     source_id: str
     slide_number_or_page_number: int = Field(ge=1)
     excerpt_or_summary: str
+    section_name: Optional[str] = None
 
 
 class ClassificationItem(BaseModel):
@@ -131,6 +132,7 @@ class DeterministicScoringResult(BaseModel):
 
 class CanonicalEvaluationResult(BaseModel):
     startup_id: str
+    document_type: Optional[str] = None
     status: Literal["queued", "processing",
                     "partial_completed", "completed", "failed"]
     classification: ClassificationResult

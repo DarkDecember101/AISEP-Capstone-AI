@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     WEBHOOK_VERIFY_SSL: bool = os.getenv(
         "WEBHOOK_VERIFY_SSL", "true").lower() == "true"
 
+    # ── Feature Flags ──────────────────────────────────────────────
+    BUSINESS_PLAN_EVAL_ENABLED: bool = os.getenv(
+        "BUSINESS_PLAN_EVAL_ENABLED", "true").lower() == "true"
+    MERGE_EVAL_ENABLED: bool = os.getenv(
+        "MERGE_EVAL_ENABLED", "true").lower() == "true"
+
     # ── OpenTelemetry Tracing ──────────────────────────────────────
     OTEL_ENABLED: str = os.getenv("OTEL_ENABLED", "false")
     OTEL_SERVICE_NAME: str = os.getenv("OTEL_SERVICE_NAME", "aisep-ai")

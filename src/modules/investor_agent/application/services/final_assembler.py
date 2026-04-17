@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Mapping
 
 from src.modules.investor_agent.application.dto.state import GroundingSummary
 from src.modules.investor_agent.application.services.scope_guard import (
-    OUT_OF_SCOPE_CAVEAT,
     build_out_of_scope_payload,
     decide_scope,
+    get_caveat,
 )
 
 FALLBACK_NO_EVIDENCE = "I could not find enough reliable evidence to answer this confidently."
@@ -101,14 +101,14 @@ def _enforce_scope_payload(state: Mapping[str, Any], assembled: Dict[str, Any]) 
     )
 
     if decision.is_out_of_scope:
-        payload = build_out_of_scope_payload()
+        payload = build_out_of_scope_payload(query)
         payload["resolved_query"] = state.get("resolved_query", "")
         payload["processing_warnings"] = list(
             dict.fromkeys(list(assembled.get("processing_warnings")
                           or []) + payload["processing_warnings"])
         )
         payload["caveats"] = list(dict.fromkeys(
-            list(assembled.get("caveats") or []) + [OUT_OF_SCOPE_CAVEAT]))
+            list(assembled.get("caveats") or []) + [get_caveat(query)]))
         if decision.refusal_reason:
             payload["writer_notes"] = list(dict.fromkeys(
                 list(payload.get("writer_notes") or []) + [f"scope_guard_refusal_reason:{decision.refusal_reason}"]))

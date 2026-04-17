@@ -10,8 +10,6 @@ from pydantic import BaseModel
 
 from src.shared.config.settings import settings
 from src.shared.logging.logger import setup_logger
-from src.shared.observability.provider_tracker import track_provider
-from src.shared.observability.metrics import PROVIDER_RETRIES_TOTAL
 
 logger = setup_logger("gemini_client")
 
@@ -129,16 +127,16 @@ class GeminiClient:
             )
 
             try:
-                with track_provider("gemini"):
-                    response = self.client.models.generate_content(
-                        model=model,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=response_schema,
-                            temperature=0.2,
-                        ),
-                    )
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=response_schema,
+                        temperature=0.2,
+                        max_output_tokens=16384,
+                    ),
+                )
 
                 if not response.text:
                     raise GeminiResponseParseError(
@@ -165,7 +163,6 @@ class GeminiClient:
                     logger.warning(
                         f"Transient Gemini error. Sleeping {wait_seconds}s before retry..."
                     )
-                    PROVIDER_RETRIES_TOTAL.labels(provider="gemini").inc()
                     time.sleep(wait_seconds)
                     last_error = classified
                     continue
@@ -174,8 +171,17 @@ class GeminiClient:
 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to decode Gemini JSON response: {e}")
-                raise GeminiResponseParseError(
-                    f"Invalid JSON returned by Gemini: {e}") from e
+                last_error = GeminiResponseParseError(
+                    f"Invalid JSON returned by Gemini: {e}")
+                if attempt > self.max_retries:
+                    raise last_error from e
+                wait_seconds = min(5 * attempt, 30)
+                logger.warning(
+                    f"JSON parse error from Gemini (attempt {attempt}/{self.max_retries + 1}). "
+                    f"Retrying in {wait_seconds}s..."
+                )
+                time.sleep(wait_seconds)
+                continue
 
             except Exception as e:
                 logger.error(f"Unexpected Gemini error: {e}")
@@ -192,7 +198,7 @@ class GeminiClient:
         response_schema: Type[T],
         model_name: str | None = None,
         image_paths: list[str] | None = None,
-        timeout: float = 60.0,
+        timeout: float = 30.0,
     ) -> T:
         """
         Async wrapper for generate_structured.

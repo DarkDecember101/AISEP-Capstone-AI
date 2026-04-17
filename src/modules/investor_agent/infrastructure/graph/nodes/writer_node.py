@@ -11,7 +11,7 @@ from src.modules.investor_agent.application.dto.state import (
     as_model,
     as_model_list,
 )
-from src.modules.investor_agent.application.services.scope_guard import OUT_OF_SCOPE_CAVEAT, OUT_OF_SCOPE_REFUSAL
+from src.modules.investor_agent.application.services.scope_guard import get_refusal, get_caveat
 from src.shared.providers.llm.gemini_client import GeminiClient
 
 
@@ -64,6 +64,9 @@ class FinalOutput(BaseModel):
 
 async def run(state: GraphState) -> Dict[str, Any]:
     if getattr(state, "intent", None) == "out_of_scope":
+        query = (getattr(state, "user_query", "") or "").strip()
+        refusal = get_refusal(query)
+        caveat = get_caveat(query)
         summary = GroundingSummary(
             verified_claim_count=0,
             weakly_supported_claim_count=0,
@@ -73,13 +76,13 @@ async def run(state: GraphState) -> Dict[str, Any]:
             coverage_status="insufficient",
         )
         return {
-            "final_answer": OUT_OF_SCOPE_REFUSAL,
+            "final_answer": refusal,
             "references": [],
-            "caveats": [OUT_OF_SCOPE_CAVEAT],
+            "caveats": [caveat],
             "writer_notes": ["scope_guard_refusal"],
             "processing_warnings": list(dict.fromkeys((state.processing_warnings or []) + ["out_of_scope_query"])),
             "grounding_summary": summary.model_dump(),
-            "messages": [AIMessage(content=OUT_OF_SCOPE_REFUSAL)],
+            "messages": [AIMessage(content=refusal)],
         }
 
     llm = GeminiClient()

@@ -9,8 +9,6 @@ from src.shared.tracing.setup import init_tracing
 from src.modules.evaluation.api.router import router as evaluation_router
 from src.modules.investor_agent.api.router import router as investor_router
 from src.modules.recommendation.api.router import router as recommendation_router
-from prometheus_client import make_asgi_app
-from src.shared.observability.http_middleware import PrometheusHTTPMiddleware
 import uvicorn
 import logging
 
@@ -21,6 +19,7 @@ app = FastAPI(
     description="AISEP AI Evaluation Service - Phase 1",
     version="1.0.0",
 )
+
 
 # ── CORS ─────────────────────────────────────────────────────────────
 # CORS_ORIGINS env var: comma-separated list of allowed origins.
@@ -40,7 +39,6 @@ app.add_middleware(
 
 # ── Middleware ───────────────────────────────────────────────────────
 app.add_middleware(CorrelationIdMiddleware)
-app.add_middleware(PrometheusHTTPMiddleware)
 
 # ── Global error handlers ───────────────────────────────────────────
 register_error_handlers(app)
@@ -61,9 +59,6 @@ app.include_router(evaluation_router,
 app.include_router(investor_router,
                    prefix=f"{settings.API_V1_STR}/investor-agent", tags=["Investor Agent"])
 app.include_router(recommendation_router, tags=["Recommendations"])
-
-# ── Prometheus metrics endpoint ─────────────────────────────────────
-app.mount("/metrics", make_asgi_app())
 
 
 if __name__ == "__main__":

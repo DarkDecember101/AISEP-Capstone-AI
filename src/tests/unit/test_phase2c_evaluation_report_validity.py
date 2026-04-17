@@ -367,8 +367,9 @@ def test_report_endpoint_backfills_startup_id_when_scores_are_valid():
     resp = client.get(f"/api/v1/evaluations/{run_id}/report")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["startup_id"] == "st03"
-    assert body["overall_result"]["overall_score"] == 62.0
+    report = body.get("report", body)  # support envelope or raw
+    assert report["startup_id"] == "st03"
+    assert report["overall_result"]["overall_score"] == 62.0
 
 
 def test_process_document_propagates_startup_id_from_run(monkeypatch, tmp_path):
@@ -414,6 +415,12 @@ def test_process_document_propagates_startup_id_from_run(monkeypatch, tmp_path):
         subindustry = _ClsItem("SaaS")
         operational_notes = []
 
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+        def model_copy(self, update=None):
+            return self
+
     class _FakeEvidenceCriterion:
         gaps = []
 
@@ -441,7 +448,7 @@ def test_process_document_propagates_startup_id_from_run(monkeypatch, tmp_path):
         def __init__(self, pack_name: str):
             self.pack_name = pack_name
 
-        def classify_startup(self, full_text, images):
+        def classify_startup(self, full_text, images, classification_context=None):
             return _FakeClassification()
 
         def map_evidence(self, full_text, images):
@@ -450,7 +457,7 @@ def test_process_document_propagates_startup_id_from_run(monkeypatch, tmp_path):
         def judge_raw_criteria(self, evidence_result_json, full_text, images):
             return _FakeRaw()
 
-        def write_report(self, scoring_result_json):
+        def write_report(self, scoring_result_json, document_type="pitch_deck", classification_json="{}"):
             return _FakeReport()
 
     class _FakeScorer:

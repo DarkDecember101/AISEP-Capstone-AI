@@ -22,6 +22,20 @@ class EvaluationRun(SQLModel, table=True):
     executive_summary: Optional[str] = None
     failure_reason: Optional[str] = None
 
+    # User-provided classification context (optional hints)
+    provided_stage: Optional[str] = None
+    provided_main_industry: Optional[str] = None
+    provided_subindustry: Optional[str] = None
+
+    # Derived evaluation mode: pitch_deck_only | business_plan_only | combined
+    evaluation_mode: Optional[str] = None
+    # Stored merged canonical JSON for combined mode
+    merged_artifact_json: Optional[str] = None
+    # Merge lifecycle status:
+    # not_applicable | waiting_for_sources | fallback_source_only |
+    # merged | merge_failed | merge_disabled
+    merge_status: Optional[str] = None
+
 
 class EvaluationDocument(SQLModel, table=True):
     __tablename__ = "evaluation_documents"

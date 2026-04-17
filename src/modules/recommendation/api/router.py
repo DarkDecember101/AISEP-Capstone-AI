@@ -17,14 +17,6 @@ from src.modules.recommendation.application.dto.recommendation_schema import (
     ReindexStartupRequest,
 )
 from src.modules.recommendation.application.services.recommendation_engine import RecommendationEngine
-from src.shared.observability.metrics import (
-    RECO_REQUESTS_TOTAL,
-    RECO_REQUEST_DURATION,
-    RECO_REINDEX_TOTAL,
-    RECO_REINDEX_DURATION,
-)
-
-import time as _time
 
 router = APIRouter()
 engine = RecommendationEngine()
@@ -54,12 +46,9 @@ async def reindex_startup(
     _validate_entity_id(startup_id, "startup_id")
     logger.info("recommendation.reindex_startup startup_id=%s correlation_id=%s",
                 startup_id, get_correlation_id())
-    _start = _time.monotonic()
     try:
         document = engine.reindex_startup(startup_id, request)
-        RECO_REINDEX_TOTAL.labels(entity_type="startup", outcome="success").inc()
     except Exception as exc:
-        RECO_REINDEX_TOTAL.labels(entity_type="startup", outcome="error").inc()
         logger.error("recommendation.reindex_startup failed startup_id=%s error=%s correlation_id=%s",
                      startup_id, exc, get_correlation_id())
         raise APIError(
@@ -67,8 +56,6 @@ async def reindex_startup(
             code="REINDEX_STARTUP_FAILED",
             message=f"Failed to reindex startup {startup_id}.",
         )
-    finally:
-        RECO_REINDEX_DURATION.labels(entity_type="startup").observe(_time.monotonic() - _start)
     return {
         "success": True,
         "startup_id": startup_id,
@@ -87,12 +74,9 @@ async def reindex_investor(
     _validate_entity_id(investor_id, "investor_id")
     logger.info("recommendation.reindex_investor investor_id=%s correlation_id=%s",
                 investor_id, get_correlation_id())
-    _start = _time.monotonic()
     try:
         document = engine.reindex_investor(investor_id, request)
-        RECO_REINDEX_TOTAL.labels(entity_type="investor", outcome="success").inc()
     except Exception as exc:
-        RECO_REINDEX_TOTAL.labels(entity_type="investor", outcome="error").inc()
         logger.error("recommendation.reindex_investor failed investor_id=%s error=%s correlation_id=%s",
                      investor_id, exc, get_correlation_id())
         raise APIError(
@@ -100,8 +84,6 @@ async def reindex_investor(
             code="REINDEX_INVESTOR_FAILED",
             message=f"Failed to reindex investor {investor_id}.",
         )
-    finally:
-        RECO_REINDEX_DURATION.labels(entity_type="investor").observe(_time.monotonic() - _start)
     return {
         "success": True,
         "investor_id": investor_id,
@@ -120,11 +102,8 @@ async def get_startup_recommendations(
     _validate_entity_id(investor_id, "investor_id")
     logger.info("recommendation.get investor_id=%s top_n=%d correlation_id=%s",
                 investor_id, top_n, get_correlation_id())
-    _start = _time.monotonic()
     try:
-        result = engine.get_recommendations(investor_id=investor_id, top_n=top_n)
-        RECO_REQUESTS_TOTAL.labels(endpoint="list").inc()
-        return result
+        return engine.get_recommendations(investor_id=investor_id, top_n=top_n)
     except ValueError as exc:
         raise APIError(
             status_code=404,
@@ -139,8 +118,6 @@ async def get_startup_recommendations(
             code="RECOMMENDATION_ERROR",
             message="Failed to generate recommendations.",
         )
-    finally:
-        RECO_REQUEST_DURATION.labels(endpoint="list").observe(_time.monotonic() - _start)
 
 
 @router.get("/api/v1/recommendations/startups/{startup_id}/explanation", response_model=RecommendationExplanationResponse)
@@ -153,11 +130,8 @@ async def get_recommendation_explanation(
     _validate_entity_id(investor_id, "investor_id")
     logger.info("recommendation.explanation investor_id=%s startup_id=%s correlation_id=%s",
                 investor_id, startup_id, get_correlation_id())
-    _start = _time.monotonic()
     try:
-        result = engine.get_explanation(investor_id=investor_id, startup_id=startup_id)
-        RECO_REQUESTS_TOTAL.labels(endpoint="explanation").inc()
-        return result
+        return engine.get_explanation(investor_id=investor_id, startup_id=startup_id)
     except ValueError as exc:
         raise APIError(
             status_code=404,
@@ -172,5 +146,3 @@ async def get_recommendation_explanation(
             code="EXPLANATION_ERROR",
             message="Failed to generate explanation.",
         )
-    finally:
-        RECO_REQUEST_DURATION.labels(endpoint="explanation").observe(_time.monotonic() - _start)
