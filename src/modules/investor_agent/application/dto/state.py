@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Literal, Dict, Any, TypeVar, Type
 import operator
 from typing_extensions import Annotated
@@ -165,6 +165,24 @@ class GraphState(BaseModel):
     writer_notes: List[str] = Field(default_factory=list)
     processing_warnings: List[str] = Field(default_factory=list)
     grounding_summary: Optional[Dict[str, Any]] = None
+
+    @field_validator("grounding_summary", mode="before")
+    @classmethod
+    def _coerce_grounding_summary(cls, v: Any) -> Optional[Dict[str, Any]]:
+        """Coerce a GroundingSummary Pydantic object to dict.
+
+        AsyncRedisSaver may deserialize a checkpoint written before
+        allowed_msgpack_modules was configured and return the raw
+        Pydantic model instead of a dict.  Accept both forms so that
+        GraphState validation never fails on a checkpoint reload.
+        """
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            return v
+        if hasattr(v, "model_dump"):
+            return v.model_dump()
+        return v
 
 
 ModelT = TypeVar("ModelT", bound=BaseModel)

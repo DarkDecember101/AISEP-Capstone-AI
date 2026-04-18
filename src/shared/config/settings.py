@@ -1,8 +1,10 @@
 import os
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file=".env", extra="allow")
     PROJECT_NAME: str = "AISEP - AI Evaluation"
     API_V1_STR: str = "/api/v1"
 
@@ -94,7 +96,24 @@ class Settings(BaseSettings):
     SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8000"))
     SERVER_HOST: str = os.getenv("SERVER_HOST", "0.0.0.0")
 
-    # ── CORS ───────────────────────────────────────────────────────────────
+    # ── Investor Agent Performance ─────────────────────────────────────────
+    # "basic" is ~3-5x faster than "advanced"; use "advanced" only when answer
+    # quality matters more than latency (e.g. premium tier).
+    INVESTOR_AGENT_SEARCH_DEPTH: str = os.getenv(
+        "INVESTOR_AGENT_SEARCH_DEPTH", "basic")
+    # Max Tavily results per sub-query (floor 2, cap 5). Lower = faster.
+    INVESTOR_AGENT_MAX_RESULTS_PER_QUERY: int = int(
+        os.getenv("INVESTOR_AGENT_MAX_RESULTS_PER_QUERY", "3"))
+    # Set to "true" to use the slower LLM-based source selection.
+    # Default is heuristic-only (much faster, similar quality for most queries).
+    INVESTOR_AGENT_LLM_SOURCE_SELECTION: bool = os.getenv(
+        "INVESTOR_AGENT_LLM_SOURCE_SELECTION", "false").lower() == "true"
+    # Max repair loop iterations (0 = no repair, 1 = one repair pass).
+    # Each iteration re-runs search→extract→fact_builder→claim_verifier.
+    INVESTOR_AGENT_MAX_REPAIR_LOOPS: int = int(
+        os.getenv("INVESTOR_AGENT_MAX_REPAIR_LOOPS", "0"))
+
+    # ── CORS ─────────────────────────────────────────────────────────────────
     # Comma-separated list of allowed origins, e.g.:
     #   http://localhost:5294,https://yourapp.example.com
     # Leave empty when CORS_ALLOW_ALL=true (wildcard overrides this list)
@@ -112,10 +131,6 @@ class Settings(BaseSettings):
     # Optional extra headers as a JSON object, e.g.: {"X-Api-Key": "abc"}
     DOCUMENT_DOWNLOAD_EXTRA_HEADERS: str = os.getenv(
         "DOCUMENT_DOWNLOAD_EXTRA_HEADERS", "{}")
-
-    class Config:
-        env_file = ".env"
-        extra = "allow"
 
 
 settings = Settings()

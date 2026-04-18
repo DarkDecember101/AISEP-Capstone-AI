@@ -102,14 +102,17 @@ def deliver_webhook(
     max_retries: int = int(getattr(settings, "WEBHOOK_MAX_RETRIES", 3))
     verify_ssl: bool = getattr(settings, "WEBHOOK_VERIFY_SSL", True)
     delivery_id: str = payload.get("delivery_id", uuid.uuid4().hex)
-    body_bytes = json.dumps(payload, default=str).encode("utf-8")
+    # Compact JSON (no spaces) so the HMAC byte-for-byte matches .NET's computation
+    body_bytes = json.dumps(payload, separators=(
+        ",", ":"), default=str).encode("utf-8")
 
     headers: Dict[str, str] = {
         "Content-Type": "application/json",
-        "X-Webhook-Delivery-Id": delivery_id,
+        "X-Delivery-Id": delivery_id,
     }
     if secret:
-        headers["X-Webhook-Signature"] = _compute_signature(body_bytes, secret)
+        # .NET verifies the header value as "sha256=<hex>"
+        headers["X-Signature"] = f"sha256={_compute_signature(body_bytes, secret)}"
 
     attempt = 0
     success = False

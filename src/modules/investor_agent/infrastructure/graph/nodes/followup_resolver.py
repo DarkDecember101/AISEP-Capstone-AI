@@ -70,15 +70,38 @@ def _fallback_resolution(user_query: str, state: GraphState) -> ResolverOutput:
     is_followup = len(state.messages) > 1 and (
         _is_short_contextual_followup(user_query) or inferred_type != "none")
     prior_topic = state.conversation_topic or state.resolved_query or state.user_query
-    resolved_query = user_query
-    if is_followup and prior_topic and inferred_type in {"entity_drilldown", "comparison", "clarification"}:
-        resolved_query = f"{prior_topic}. Follow-up focus: {user_query}"
+    prior_timeframe = state.last_timeframe or _extract_timeframe(
+        prior_topic or "")
 
+    # Build a clean, search-ready standalone query.
+    # Avoid "{prior_topic}. Follow-up focus: {user_query}" pattern which is
+    # noisy and confuses downstream search/planner nodes.
+    _new_geos = _geo_in_text(user_query) - _geo_in_text(
+        (prior_topic or "") + " " + " ".join(state.last_entities or []))
+
+    if is_followup and prior_topic and inferred_type in {"entity_drilldown", "comparison"}:
+        base = prior_topic.strip().rstrip(".")
+        timeframe_suffix = f" {prior_timeframe}" if prior_timeframe else ""
+        if _new_geos:
+            # Make the country the explicit focus so search queries are specific.
+            geo_fragment = user_query.strip().rstrip("?").strip()
+            resolved_query = f"{base} {geo_fragment}{timeframe_suffix}".strip()
+        else:
+            resolved_query = f"{base} — {user_query.strip()}{timeframe_suffix}"
+    elif is_followup and prior_topic and inferred_type == "clarification":
+        base = prior_topic.strip().rstrip(".")
+        resolved_query = f"{base}: {user_query.strip()}"
+    else:
+        resolved_query = user_query
+
+    # New-geography drilldown should NOT reuse old broader-region evidence.
+    _geo_drilldown_new = inferred_type == "entity_drilldown" and bool(
+        _new_geos)
     reuse_previous_verified_claims = inferred_type in {
         "entity_drilldown", "source_request", "summary_request", "clarification", "comparison"
-    }
+    } and not _geo_drilldown_new
     requires_fresh_search = inferred_type in {
-        "entity_drilldown", "comparison", "recency_update"}
+        "entity_drilldown", "comparison", "recency_update"} or _geo_drilldown_new
 
     return ResolverOutput(
         is_followup=is_followup,
@@ -105,6 +128,9 @@ def _derive_search_decision(resolution: ResolverOutput, previous_verified_claims
         return "reuse_plus_search"
 
     if resolution.followup_type in {"entity_drilldown", "comparison"}:
+        # If the LLM (or override below) flagged a fresh search, honour it.
+        if resolution.requires_fresh_search:
+            return "fresh_search"
         return "reuse_plus_search"
 
     if resolution.followup_type == "recency_update":
@@ -121,6 +147,29 @@ def _extract_entities_from_text(text: str) -> List[str]:
     ]
     lowered = text.lower()
     return [entity for entity in known_entities if entity in lowered]
+
+
+# Map of surface forms → canonical geography name.
+_GEO_TERMS: Dict[str, str] = {
+    "việt nam": "vietnam", "vietnam": "vietnam",
+    "indonesia": "indonesia",
+    "singapore": "singapore",
+    "thái lan": "thailand", "thailand": "thailand",
+    "malaysia": "malaysia",
+    "philippines": "philippines",
+    "myanmar": "myanmar",
+    "campuchia": "cambodia", "cambodia": "cambodia",
+    "lào": "laos", "laos": "laos",
+    "trung quốc": "china", "china": "china",
+    "nhật bản": "japan", "japan": "japan",
+    "hàn quốc": "korea", "korea": "korea",
+}
+
+
+def _geo_in_text(text: str) -> set:
+    """Return the set of canonical geography names found in *text*."""
+    lowered = (text or "").lower()
+    return {norm for term, norm in _GEO_TERMS.items() if term in lowered}
 
 
 def _extract_timeframe(text: str) -> str:
@@ -160,36 +209,75 @@ async def run(state: GraphState) -> Dict[str, Any]:
     else:
         prompt = f"""
         You are a follow-up resolver for an investor research chatbot.
-        Support Vietnamese and English.
+Support Vietnamese and English.
 
-        Conversation history:
-        {history_str}
+Conversation history:
+{history_str}
 
-        Latest user query: "{user_query}"
+Latest user query: "{user_query}"
 
-        Previous memory:
-        - previous_topic: {state.conversation_topic or state.resolved_query or state.user_query}
-        - previous_entities: {state.last_entities}
-        - previous_timeframe: {state.last_timeframe}
-        - previous_verified_claim_count: {len(previous_verified_claims)}
-        - previous_reference_count: {len(previous_references)}
+Previous memory:
+- previous_topic: {state.conversation_topic or state.resolved_query or state.user_query}
+- previous_entities: {state.last_entities}
+- previous_timeframe: {state.last_timeframe}
+- previous_verified_claim_count: {len(previous_verified_claims)}
+- previous_reference_count: {len(previous_references)}
 
-        Return strict JSON fields:
-        - is_followup: bool
-        - followup_type: entity_drilldown | source_request | recency_update | comparison | summary_request | clarification | none
-        - resolved_query: standalone enriched query
-        - resolved_topic: short topic phrase
-        - resolved_entities: list of entities/markets/countries
-        - resolved_timeframe: timeframe if any
-        - reuse_previous_verified_claims: bool
-        - requires_fresh_search: bool
-        - reasoning: short reason
+Your job:
+Determine whether the latest query is a follow-up that depends on prior context.
+If it is, resolve it into a clean standalone query for downstream research.
 
-        Rules:
-        - If query is short/context-dependent, mark follow-up.
-        - For source_request/summary_request/clarification: prefer reuse_previous_verified_claims=true.
-        - For recency_update: requires_fresh_search=true.
-        - For entity drilldown like "Việt Nam thì sao": keep prior topic/timeframe and resolve into a rich standalone query.
+Return strict JSON with these fields:
+- is_followup: boolean
+- followup_type: entity_drilldown | source_request | recency_update | comparison | summary_request | clarification | none
+- resolved_query: standalone enriched query
+- resolved_topic: short topic phrase
+- resolved_entities: list of entities / markets / countries / sectors
+- resolved_timeframe: timeframe if any
+- reuse_previous_verified_claims: boolean
+- requires_fresh_search: boolean
+- reasoning: one short sentence
+
+Definitions:
+- entity_drilldown: user narrows the same topic to a geography, segment, or sub-entity
+- source_request: user asks for sources, citations, evidence, or references
+- recency_update: user asks for the latest version, newer information, or a changed timeframe
+- comparison: user asks to compare the prior topic/entity with another entity or market
+- summary_request: user asks to summarize or condense prior results
+- clarification: user asks to explain a point from prior context without necessarily needing fresh search
+- none: a standalone new query
+
+Rules:
+1. If the latest query is short, referential, elliptical, or context-dependent, mark is_followup = true.
+2. Preserve only necessary prior context. Do not drag irrelevant entities, markets, or timeframes into the resolved query.
+3. For source_request, summary_request, and most clarification cases:
+   - prefer reuse_previous_verified_claims = true
+   - prefer requires_fresh_search = false
+4. For recency_update:
+   - requires_fresh_search = true
+5. For comparison:
+   - requires_fresh_search = true if a new entity/market/geography is introduced
+6. For entity_drilldown:
+   - keep the prior topic
+   - keep the prior timeframe unless the user changes it
+   - update the entities to reflect the new focus
+   - if the new focus introduces a country or market NOT present in previous_entities
+     (e.g. user asks about Vietnam after a Southeast Asia question), set
+     requires_fresh_search = true AND reuse_previous_verified_claims = false
+   - resolved_query must explicitly name the new country/market so search is specific
+7. If previous_verified_claim_count or previous_reference_count is zero, be more cautious about reuse.
+8. resolved_query must be directly usable by downstream search/research.
+9. reasoning must be one short sentence only.
+
+Examples:
+- "Việt Nam thì sao?" -> entity_drilldown
+- "Nguồn đâu?" -> source_request
+- "Cập nhật mới nhất thì sao?" -> recency_update
+- "So với Indonesia thì sao?" -> comparison
+- "Tóm tắt ngắn hơn" -> summary_request
+- "Ý đó nghĩa là gì?" -> clarification
+
+Return JSON only.
         """
 
         try:
@@ -213,6 +301,28 @@ async def run(state: GraphState) -> Dict[str, Any]:
 
     if search_decision == "reuse_only" and previous_verified_claim_count == 0:
         search_decision = "reuse_plus_search"
+
+    # Hard override: if the user drills into a new geography that was NOT in the
+    # prior context (e.g. "Việt Nam thì sao?" after a SEA-wide question), force
+    # fresh_search regardless of what the LLM decided.  Old broader-region
+    # verified claims are not useful evidence for a country-specific follow-up.
+    _prior_geo_context = " ".join(
+        state.last_entities or []) + " " + (state.conversation_topic or "")
+    _new_geos_run = _geo_in_text(
+        resolution.resolved_query) - _geo_in_text(_prior_geo_context)
+    if resolution.followup_type == "entity_drilldown" and _new_geos_run:
+        search_decision = "fresh_search"
+        resolution = ResolverOutput(
+            **{
+                **resolution.model_dump(),
+                "reuse_previous_verified_claims": False,
+                "requires_fresh_search": True,
+            }
+        )
+        logger.info(
+            "Follow-up resolver override: new geography detected=%s → fresh_search, reuse=False",
+            _new_geos_run,
+        )
 
     reused_claim_count = previous_verified_claim_count if (
         resolution.reuse_previous_verified_claims and search_decision in {

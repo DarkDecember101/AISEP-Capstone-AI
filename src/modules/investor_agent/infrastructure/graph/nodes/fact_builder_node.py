@@ -35,13 +35,17 @@ def _fallback_build_from_documents(state: GraphState) -> Dict[str, List[Any]]:
         ))
 
     if facts:
-        grouped = [fact.fact_id for fact in facts[:3]]
-        claims.append(ClaimCandidate(
-            claim_id="claim_1",
-            claim_text=f"Evidence from selected sources related to '{state.user_query}' indicates actionable findings.",
-            topic=(state.intent or "mixed"),
-            supporting_fact_ids=grouped,
-        ))
+        # Generate one claim candidate per fact so claim_verifier always has
+        # something to evaluate.  These are weak fallback claims — the verifier
+        # will mark them weakly_supported at best, which is honest and still
+        # lets the writer produce a cautious answer rather than a hard refusal.
+        for fact in facts:
+            claims.append(ClaimCandidate(
+                claim_id=f"claim_{fact.fact_id}",
+                claim_text=fact.statement[:200],
+                topic=fact.topic,
+                supporting_fact_ids=[fact.fact_id],
+            ))
 
     return {"facts": facts, "claims": claims}
 
@@ -52,10 +56,12 @@ async def run(state: GraphState) -> Dict[str, Any]:
     extracted_docs = as_model_list(
         state.extracted_documents, ExtractedDocument)
 
-    # Build context: cap each doc at 2000 chars, total at 8000 chars to keep
-    # prompt size manageable and avoid Gemini timeouts on large payloads.
-    MAX_CHARS_PER_DOC = 2000
-    MAX_TOTAL_CHARS = 8000
+    # Build context: cap each doc at 1000 chars, total at 3500 chars.
+    # Keeping input small prevents Gemini from generating a response that
+    # exceeds its effective output-token budget and gets truncated mid-JSON,
+    # which would cause a JSONDecodeError → retry sleep → asyncio timeout.
+    MAX_CHARS_PER_DOC = 1000
+    MAX_TOTAL_CHARS = 3500
     docs_context = ""
     for d in extracted_docs:
         if d.extract_status in ["success", "partial"] and d.content:
@@ -69,18 +75,72 @@ async def run(state: GraphState) -> Dict[str, Any]:
                 len(extracted_docs), len(docs_context))
 
     if not docs_context.strip():
-        warnings.append("fact_builder_received_no_usable_documents")
-        logger.warning("Fact builder: no usable extracted content")
-        return {"facts": [], "claims_candidate": [], "processing_warnings": warnings}
+        # Before giving up, try to build lightweight context from search result
+        # snippets — this covers the case where Tavily Extract quota is exceeded
+        # but search results still contain usable snippet text.
+        search_results_raw = list(getattr(state, "search_results", []) or [])
+        for r in search_results_raw[:6]:
+            url = r.get("url", "") if isinstance(
+                r, dict) else getattr(r, "url", "")
+            snippet = (
+                (r.get("snippet") or r.get("content") or "")
+                if isinstance(r, dict)
+                else (getattr(r, "snippet", "") or getattr(r, "content", ""))
+            )
+            title = r.get("title", "") if isinstance(
+                r, dict) else getattr(r, "title", "")
+            if snippet and url:
+                entry = f"--- Source: {url} ---\n{title}\n{snippet.strip()[:600]}\n"
+                if len(docs_context) + len(entry) <= MAX_TOTAL_CHARS:
+                    docs_context += entry
+
+        if docs_context.strip():
+            warnings.append("fact_builder_using_snippet_fallback")
+            logger.info(
+                "Fact builder: using search snippet fallback, chars=%s", len(
+                    docs_context)
+            )
+        else:
+            warnings.append("fact_builder_received_no_usable_documents")
+            logger.warning(
+                "Fact builder: no usable extracted content and no search snippets")
+            return {"facts": [], "claims_candidate": [], "processing_warnings": warnings}
 
     query_to_use = (state.resolved_query or state.user_query or "").strip()
     prompt = f"""
-    You are an expert financial researcher extracting facts for: "{query_to_use}".
-    
-    Extract specific, verifiable facts (especially numbers, dates, precise statements).
-    Then formulate 2-5 Claim Candidates that would form the core of your final answer, grouping related fact_ids into each claim.
-    
-    {docs_context}
+    You are a fact builder for an investor market-intelligence pipeline.
+
+Query: "{query_to_use}"
+Intent: {state.intent}
+
+Your job:
+Extract atomic, verifiable evidence units from the source material.
+Then build cautious claim candidates that stay very close to the extracted facts.
+
+FACT RULES:
+1. Each fact must be atomic: one fact per item.
+2. Preserve numbers, percentages, price ranges, dates, years, and time periods exactly.
+3. Do not paraphrase away precision.
+4. Prefer direct factual statements over commentary, opinion, or narrative framing.
+5. If a statement is forecast, interpretation, or subjective commentary, still extract it only if useful, but mark it with weaker support_strength.
+6. Tag each fact with the most relevant topic/facet when possible.
+7. Do not merge multiple independent facts into one fact item.
+
+CLAIM CANDIDATE RULES:
+1. Build 1-5 claim candidates only from extracted facts.
+2. Each claim candidate must be narrow enough to be verified against its supporting_fact_ids.
+3. Do not create broad conclusions that go beyond the facts.
+4. Do not invent causal explanations unless they are explicitly stated in the source material.
+5. If evidence is fragmented or weak, produce fewer and narrower claims.
+6. If no good claim candidate can be formed safely, return facts only and leave candidate_claims minimal.
+
+QUALITY STANDARD:
+- Accuracy is more important than coverage.
+- Claims must be easy for a verifier to evaluate.
+- Numeric or directional claims must remain conservative unless directly supported.
+
+Source material:
+{docs_context}
     """
 
     facts: List[FactItem] = []
@@ -101,7 +161,21 @@ async def run(state: GraphState) -> Dict[str, Any]:
         if not facts:
             facts = fallback["facts"]
         if not claims_candidate:
-            claims_candidate = fallback["claims"]
+            if facts:
+                # LLM extracted facts but no claims: auto-generate one-to-one
+                # claim candidates so the verifier has something to evaluate.
+                claims_candidate = [
+                    ClaimCandidate(
+                        claim_id=f"auto_{f.fact_id}",
+                        claim_text=f.statement[:200],
+                        topic=f.topic,
+                        supporting_fact_ids=[f.fact_id],
+                    )
+                    for f in facts[:5]
+                ]
+                warnings.append("fact_builder_auto_claims_from_facts")
+            else:
+                claims_candidate = fallback["claims"]
         warnings.append("fact_builder_used_fallback")
 
     topic_summary: Dict[str, int] = {}

@@ -124,9 +124,14 @@ def get_evaluation(id: int, session: Session = Depends(get_session)):
     }
 
     return EvaluationStatusResponse(
+        id=run.id,
         evaluation_run_id=run.id,
         startup_id=run.startup_id,
         status=_normalise_status(run.status),
+        submitted_at=run.submitted_at,
+        failure_reason=run.failure_reason,
+        overall_score=run.overall_score,
+        overall_confidence=run.overall_confidence,
         evaluation_mode=run.evaluation_mode,
         documents=[
             {

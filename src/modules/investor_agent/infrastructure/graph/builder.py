@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from langgraph.graph import StateGraph, END
 
 from src.modules.investor_agent.application.dto.state import GraphState
+from src.shared.config.settings import settings
 from src.modules.investor_agent.infrastructure.graph.nodes import (
     followup_resolver,
     router_node,
@@ -23,6 +24,12 @@ if TYPE_CHECKING:
 
 def should_repair_loop(state: GraphState) -> str:
     """Conditional Edge logic for repair loop."""
+    # INVESTOR_AGENT_MAX_REPAIR_LOOPS=0 (default) disables repair entirely,
+    # saving a full pipeline re-run (~40-60s). Set to 1 to allow one repair.
+    max_loops = max(0, settings.INVESTOR_AGENT_MAX_REPAIR_LOOPS)
+    if max_loops == 0:
+        return "writer"  # fast path: never repair
+
     coverage_assessment = getattr(state, "coverage_assessment", None)
     needs_repair_loop = False
     if isinstance(coverage_assessment, dict):
@@ -32,7 +39,7 @@ def should_repair_loop(state: GraphState) -> str:
         needs_repair_loop = bool(
             getattr(coverage_assessment, "needs_repair_loop", False))
 
-    if state.loop_count < 2 and needs_repair_loop:
+    if state.loop_count < max_loops and needs_repair_loop:
         return "search"
     return "writer"
 

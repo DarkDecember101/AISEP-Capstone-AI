@@ -205,7 +205,7 @@ class RecommendationEngine:
 
         return RecommendationListResponse(
             investor_id=investor_id,
-            items=results[:top_n],
+            matches=results[:top_n],
             warnings=public_warnings,
             internal_warnings=internal_warnings,
             generated_at=datetime.utcnow(),
@@ -255,7 +255,7 @@ class RecommendationEngine:
         return RecommendationExplanationResponse(
             investor_id=investor_id,
             startup_id=startup_id,
-            result=result,
+            explanation=result,
             generated_at=datetime.utcnow(),
         )
 

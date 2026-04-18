@@ -37,24 +37,38 @@ async def run(state: GraphState) -> Dict[str, Any]:
 
     prompt = f"""
     You are an expert router for an investor research assistant.
-    You MUST classify the query into ONE intent from this fixed set:
-    - market_trend: overall market direction, size, growth, macro themes.
-    - regulation: local or global legal, policy, compliance factors.
-    - news: latest announcements, funding events, acquisitions.
-    - competitor_context: comparing products, positioning, players.
-    - mixed: multiple aspects.
-    - out_of_scope: only if the query is clearly unrelated to investor research.
 
-    Language support: Vietnamese and English.
-    Avoid overusing out_of_scope. If unsure but investor-related, choose mixed.
+Your job is to classify the user query into EXACTLY ONE intent from this fixed set:
+- market_trend: market outlook, sector trends, growth, demand/supply, pricing, macro themes, segment attractiveness
+- regulation: legal, regulatory, policy, compliance, enforcement, approval environment, rule changes
+- news: recent announcements, funding events, acquisitions, launches, partnerships, major company updates
+- competitor_context: comparing companies, products, positioning, market structure, differentiation, pricing, competitive dynamics
+- mixed: the query genuinely combines two or more major intents with similar importance
+- out_of_scope: only if the query is clearly unrelated to investor research or market intelligence
 
-    Return strict JSON with fields:
-    - intent
-    - confidence: high | medium | low
-    - reasoning: short string
-    - is_followup_sensitive: boolean (true if short follow-up likely depends on context)
+Classification rules:
+1. Choose the SINGLE best dominant intent whenever possible.
+2. Use mixed only when the query truly combines multiple major intents with similar importance.
+3. Do NOT overuse out_of_scope.
+4. If the query is investor-related but somewhat ambiguous, prefer market_trend or mixed rather than out_of_scope.
+5. Broad questions about an industry, market, or sector usually belong to market_trend.
+6. Questions about companies, rivalry, positioning, or “who is stronger / different” usually belong to competitor_context.
+7. Questions about recent events or announcements usually belong to news.
+8. Questions about legal changes, policy risk, compliance burden, or rule impact usually belong to regulation.
 
-    Query: {query_to_use}
+Language support:
+- Vietnamese and English.
+
+Follow-up sensitivity:
+Set is_followup_sensitive = true if the query is short, referential, or likely depends on prior context.
+
+Return strict JSON only with these fields:
+- intent
+- confidence: high | medium | low
+- reasoning: one short sentence
+- is_followup_sensitive: boolean
+
+Query: {query_to_use}
     """
 
     fallback_used = False

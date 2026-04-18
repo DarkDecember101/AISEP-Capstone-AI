@@ -238,7 +238,7 @@ class RecommendationRunRecord(BaseModel):
 
 class RecommendationListResponse(BaseModel):
     investor_id: str
-    items: List[RecommendationMatchResult] = Field(default_factory=list)
+    matches: List[RecommendationMatchResult] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     internal_warnings: List[str] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -247,5 +247,5 @@ class RecommendationListResponse(BaseModel):
 class RecommendationExplanationResponse(BaseModel):
     investor_id: str
     startup_id: str
-    result: RecommendationMatchResult
+    explanation: RecommendationMatchResult
     generated_at: datetime = Field(default_factory=datetime.utcnow)

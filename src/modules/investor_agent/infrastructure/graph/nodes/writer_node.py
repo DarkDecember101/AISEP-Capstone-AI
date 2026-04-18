@@ -130,7 +130,34 @@ async def run(state: GraphState) -> Dict[str, Any]:
     conflicts_str = "\n".join(
         [f"- CONFLICT: {c.claim_text}" for c in conflicts])
 
+    if not supported_claims and conflicts:
+        # Promote conflicting claims to weakly_supported so the writer has
+        # something to work with. The prompt explicitly marks them as disputed.
+        supported_claims = [
+            VerifiedClaim(
+                claim_id=c.claim_id,
+                claim_text=c.claim_text,
+                status="weakly_supported",
+                supporting_sources=c.supporting_sources,
+                verification_note=f"[DISPUTED] {c.verification_note}",
+            )
+            for c in conflicts
+        ]
+        conflicts = []  # already embedded in supported_claims with DISPUTED tag
+
     if not supported_claims and not conflicts:
+        _raw_query_for_fallback = (
+            getattr(state, "user_query", "") or "").strip()
+        _vi_chars = sum(
+            1 for ch in _raw_query_for_fallback if "\u00c0" <= ch <= "\u1ef9")
+        _is_vi_fallback = _vi_chars >= 2 or any(w in _raw_query_for_fallback.lower() for w in (
+            "bạn", "tôi", "của", "là", "không", "có", "các", "trong", "này", "được", "việt"))
+        if _is_vi_fallback:
+            _fallback_msg = "Không tìm thấy đủ dữ liệu có thể xác minh để trả lời câu hỏi này một cách đáng tin cậy."
+            _fallback_caveat = "Bằng chứng tìm thấy không đủ để đưa ra kết luận."
+        else:
+            _fallback_msg = "No sufficient, verifiable data was found to confidently answer this query based on credible sources."
+            _fallback_caveat = "Insufficient evidence found during research."
         empty_summary = GroundingSummary(
             verified_claim_count=0,
             weakly_supported_claim_count=0,
@@ -141,37 +168,78 @@ async def run(state: GraphState) -> Dict[str, Any]:
             coverage_status="insufficient"
         )
         return {
-            "final_answer": "No sufficient, verifiable data was found to confidently answer this query based on credible sources.",
+            "final_answer": _fallback_msg,
             "references": [],
-            "caveats": ["Insufficient evidence found during research."],
+            "caveats": [_fallback_caveat],
             "writer_notes": ["fallback_insufficient_evidence"],
             "processing_warnings": ["Zero supported claims extracted."],
-            "grounding_summary": empty_summary,
-            "messages": [AIMessage(content="No sufficient, verifiable data was found to confidently answer this query based on credible sources.")]
+            "grounding_summary": empty_summary.model_dump(),
+            "messages": [AIMessage(content=_fallback_msg)]
         }
 
     query_to_use = getattr(state, "resolved_query",
                            state.user_query) or state.user_query
+
+    # Compute coverage_status early so it can be referenced in the prompt.
+    coverage_assessment = as_model(
+        getattr(state, "coverage_assessment", None), CoverageAssessment)
+    coverage_status = coverage_assessment.coverage_status if coverage_assessment else "insufficient"
+
     prompt = f"""
-    You are an expert AI Research Writer for top tier Investors.
-    Query: "{query_to_use}"
-    Intent: {state.intent}
-    
-    Your task: Write a comprehensive, nuanced answer using ONLY the Verified Claims below.
-    
-    CRITICAL RULES:
-    1. DO NOT fabricate or guess ANY numbers, dates, precise qualitative trends, market sizes, or growth rates.
-    2. DO NOT include any claim that is not explicitly in the Verified Claims.
-    3. EVERY critical claim or group of claims MUST have an inline citation marker mapping to its url like [1] or (Source: URL).
-    4. If 'weakly_supported', use tentative language ("some early indications suggest...").
-    5. Summarize any CONFLICTS neutrally without resolving them yourself.
-    6. Include ONLY the real reference URLs that correspond to the valid claims you used. No placeholders like example.com.
-    
-    Verified Claims (Use ONLY these):
-    {verified_str}
-    
-    Conflicting Information (Highlight if relevant):
-    {conflicts_str}
+You are an expert AI Research Writer for investors.
+
+Query: "{query_to_use}"
+Intent: {state.intent}
+Coverage status: {coverage_status}
+
+LANGUAGE RULE:
+- Detect the language of the Query and respond in the same language if it is clearly Vietnamese or English.
+- If the query is in Vietnamese, respond in natural Vietnamese.
+- If the query is in English, respond in English.
+- If the query is in another language or unclear, default to English.
+- Common investment, product, or technical terms (e.g. fintech, funding, Series A, market cap, unit economics) may remain in English when more natural.
+
+Your task:
+Write an investor-oriented answer using ONLY the Verified Claims below.
+
+IMPORTANT:
+- Do not stop at summarizing facts.
+- Explain why the information matters from an investor perspective.
+- Stay grounded in the Verified Claims only.
+- You may make limited, careful implications if they directly follow from the Verified Claims, but do NOT invent numbers, dates, market sizes, growth rates, or unsupported causal claims.
+- Do NOT present the answer as investment advice.
+
+CRITICAL RULES:
+1. DO NOT fabricate or guess any numbers, dates, growth rates, rankings, or unsupported directional conclusions.
+2. DO NOT include any factual claim that is not explicitly supported by the Verified Claims.
+3. Treat weakly supported points cautiously and signal uncertainty clearly.
+4. If there is conflicting information and it is relevant, summarize it neutrally without resolving it yourself.
+5. If coverage is thin or insufficient, say so clearly and keep the answer appropriately cautious.
+6. Use only the provided real references. Do not invent or alter URLs.
+
+WRITING STYLE:
+- Clear, direct, investor-relevant.
+- Avoid generic textbook definitions unless explicitly asked.
+- Prioritize materiality over background detail.
+- Avoid long introductory paragraphs.
+
+DEFAULT ANSWER STRUCTURE:
+Use this structure whenever appropriate:
+1. Brief summary
+2. Why this matters for investors
+3. Key risks or caveats
+4. What to watch next
+
+REFERENCE RULE:
+- In final_answer, use inline citation markers like [1], [2].
+- The references list must map cleanly to the sources actually used.
+- Do not cite a source that is not used in the answer.
+
+Verified Claims:
+{verified_str}
+
+Conflicting Information:
+{conflicts_str}
     """
 
     res = await llm.generate_structured_async(
@@ -201,14 +269,9 @@ async def run(state: GraphState) -> Dict[str, Any]:
             warnings.append("writer_reused_previous_references")
 
     final_caveats = res.caveats
-    coverage_assessment = as_model(
-        getattr(state, "coverage_assessment", None), CoverageAssessment)
-    coverage_status = "insufficient"
-    if coverage_assessment:
-        coverage_status = coverage_assessment.coverage_status
-        if coverage_assessment.coverage_status != "sufficient":
-            final_caveats.append(
-                f"Research coverage: {coverage_assessment.coverage_status}")
+    if coverage_assessment and coverage_assessment.coverage_status != "sufficient":
+        final_caveats.append(
+            f"Research coverage: {coverage_assessment.coverage_status}")
 
     v_count = len([c for c in supported_claims if c.status == "supported"])
     w_count = len(

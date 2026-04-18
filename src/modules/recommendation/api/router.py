@@ -57,11 +57,8 @@ async def reindex_startup(
             message=f"Failed to reindex startup {startup_id}.",
         )
     return {
-        "success": True,
-        "startup_id": startup_id,
-        "profile_version": document.profile_version,
-        "source_updated_at": document.source_updated_at,
-        "message": "Startup recommendation document reindexed successfully",
+        "status": "ok",
+        "message": "Startup reindexed successfully",
     }
 
 
@@ -85,11 +82,8 @@ async def reindex_investor(
             message=f"Failed to reindex investor {investor_id}.",
         )
     return {
-        "success": True,
-        "investor_id": investor_id,
-        "profile_version": document.profile_version,
-        "source_updated_at": document.source_updated_at,
-        "message": "Investor recommendation document reindexed successfully",
+        "status": "ok",
+        "message": "Investor reindexed successfully",
     }
 
 

@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field, field_validator
 
+from src.shared.auth import require_internal_auth
 from src.shared.correlation import get_correlation_id
 from src.shared.checkpoint import get_checkpointer
 from src.shared.config.settings import settings
@@ -172,7 +173,11 @@ def _sse(payload: Any) -> str:
 
 
 @router.post("/chat/stream")
-async def chat_research_stream(request: ChatRequest, _rl=Depends(_stream_rate_limit)):
+async def chat_research_stream(
+    request: ChatRequest,
+    _rl=Depends(_stream_rate_limit),
+    _auth: None = Depends(require_internal_auth),
+):
     """
     Streaming version of Stateful Multi-turn Investor Agent Pipeline.
     Streams LangGraph events.

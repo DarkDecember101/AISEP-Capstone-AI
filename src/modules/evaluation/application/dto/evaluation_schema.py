@@ -6,6 +6,15 @@ _NULL_LIKE: frozenset = frozenset(
     {"null", "none", "n/a", "na", "unknown", "undefined", ""})
 _ALLOWED_DOC_TYPES: frozenset = frozenset({"pitch_deck", "business_plan"})
 
+# Normalize PascalCase / camelCase sent by .NET → snake_case internal value
+_DOC_TYPE_NORMALISE: dict[str, str] = {
+    "pitchdeck": "pitch_deck",
+    "pitch_deck": "pitch_deck",
+    "pitchdeck_": "pitch_deck",
+    "businessplan": "business_plan",
+    "business_plan": "business_plan",
+}
+
 
 class DocumentInputSchema(BaseModel):
     document_id: str
@@ -15,12 +24,18 @@ class DocumentInputSchema(BaseModel):
     @field_validator("document_type")
     @classmethod
     def validate_document_type(cls, v: str) -> str:
-        v = (v or "").strip().lower()
-        if v not in _ALLOWED_DOC_TYPES:
+        # Strip spaces/dashes/underscores to produce a compact lowercase key
+        compact = (v or "").strip().lower().replace("-", "").replace("_", "")
+        # Re-insert underscore via normalisation map so PitchDeck → pitch_deck
+        normalised = _DOC_TYPE_NORMALISE.get(compact) or _DOC_TYPE_NORMALISE.get(
+            (v or "").strip().lower()
+        )
+        if normalised is None:
             raise ValueError(
-                f"document_type must be one of {sorted(_ALLOWED_DOC_TYPES)}, got '{v}'"
+                f"document_type must be one of {sorted(_ALLOWED_DOC_TYPES)} "
+                f"(also accepts PascalCase: PitchDeck, BusinessPlan), got '{v}'"
             )
-        return v
+        return normalised
 
 
 class SubmitEvaluationRequest(BaseModel):
@@ -83,6 +98,7 @@ class SubmitEvaluationResponse(BaseModel):
     evaluation_run_id: int
     startup_id: str
     status: str
+    message: str = "Evaluation submitted successfully"
     evaluation_mode: str
     documents: List[DocumentStatusSchema]
 
@@ -90,9 +106,14 @@ class SubmitEvaluationResponse(BaseModel):
 # --- Status response ---
 
 class EvaluationStatusResponse(BaseModel):
-    evaluation_run_id: int
+    id: int  # .NET polls on this field name
+    evaluation_run_id: int  # kept for backward compat
     startup_id: str
     status: str
+    submitted_at: Optional[Any] = None
+    failure_reason: Optional[str] = None
+    overall_score: Optional[float] = None
+    overall_confidence: Optional[float] = None
     evaluation_mode: Optional[str] = None
     documents: List[Dict[str, Any]] = []
     has_pitch_deck_result: bool = False

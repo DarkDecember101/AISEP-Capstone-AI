@@ -52,12 +52,17 @@ def _create_redis_checkpointer() -> BaseCheckpointSaver:
             "CHECKPOINT_BACKEND is 'redis' but CHECKPOINT_REDIS_URL is empty."
         )
 
+    from src.modules.investor_agent.application.dto.state import GroundingSummary
+
     ttl = _build_ttl_config()
     saver = AsyncRedisSaver(
         redis_url=url,
         ttl=ttl,
         checkpoint_prefix="aisep_ckpt",
         checkpoint_write_prefix="aisep_ckpt_w",
+        allowed_msgpack_modules=[
+            ("src.modules.investor_agent.application.dto.state", "GroundingSummary"),
+        ],
     )
     logger.info(
         "Redis checkpoint initialised url=%s ttl_minutes=%s",
@@ -122,7 +127,8 @@ async def setup_checkpointer() -> None:
     ckpt = get_checkpointer()
     if hasattr(ckpt, "asetup"):
         await ckpt.asetup()
-        logger.info("Checkpointer asetup() completed — RediSearch indexes created.")
+        logger.info(
+            "Checkpointer asetup() completed — RediSearch indexes created.")
 
 
 def reset_checkpointer() -> None:
