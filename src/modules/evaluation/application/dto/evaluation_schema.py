@@ -30,12 +30,14 @@ class DocumentInputSchema(BaseModel):
         normalised = _DOC_TYPE_NORMALISE.get(compact) or _DOC_TYPE_NORMALISE.get(
             (v or "").strip().lower()
         )
-        if normalised is None:
-            raise ValueError(
-                f"document_type must be one of {sorted(_ALLOWED_DOC_TYPES)} "
-                f"(also accepts PascalCase: PitchDeck, BusinessPlan), got '{v}'"
-            )
-        return normalised
+        # Return normalised value if known; otherwise keep original (will be
+        # filtered out by model_validator rather than rejecting the whole request).
+        return normalised if normalised is not None else (v or "").strip().lower()
+
+    @property
+    def is_processable(self) -> bool:
+        """True if this document has a type Python can evaluate."""
+        return self.document_type in _ALLOWED_DOC_TYPES
 
 
 class SubmitEvaluationRequest(BaseModel):
@@ -60,9 +62,29 @@ class SubmitEvaluationRequest(BaseModel):
             if str(self.provided_subindustry).strip().lower() in _NULL_LIKE:
                 object.__setattr__(self, "provided_subindustry", None)
 
+        # --- filter out documents with unknown/unsupported document_type ---
+        # .NET may send documents of type "unknown" or future types Python
+        # cannot evaluate. Silently drop them rather than rejecting the whole
+        # request, so a mixed payload (PitchDeck + unknown) still succeeds.
+        known_docs = [d for d in self.documents if d.document_type in _ALLOWED_DOC_TYPES]
+        unknown_docs = [d for d in self.documents if d.document_type not in _ALLOWED_DOC_TYPES]
+        if unknown_docs:
+            import logging
+            _log = logging.getLogger("aisep.evaluation")
+            _log.warning(
+                "submit: ignoring %d document(s) with unsupported document_type(s): %s",
+                len(unknown_docs),
+                [d.document_type for d in unknown_docs],
+            )
+        object.__setattr__(self, "documents", known_docs)
+
         # --- documents validation ---
         if not self.documents:
-            raise ValueError("documents must contain at least 1 document")
+            raise ValueError(
+                "No processable documents in request. "
+                "document_type must be one of: pitch_deck, business_plan "
+                "(PascalCase PitchDeck / BusinessPlan also accepted)."
+            )
 
         type_counts: dict[str, int] = {}
         for doc in self.documents:
