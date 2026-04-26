@@ -8,6 +8,10 @@ Input:
 
 Your task:
 For each of the 6 criteria, extract the strongest supporting evidence, weakening evidence, and contradiction candidates from the documents.
+All user-facing descriptive text in the output must be written in natural Vietnamese.
+Keep criterion names, enum values, and field names exactly as required by the schema.
+For `excerpt_or_summary`, write a concise Vietnamese summary of the evidence; do not paste long English sentences verbatim unless a short quoted phrase is essential.
+`description`, `coverage_note`, and every item in `gaps` must be written in Vietnamese.
 
 Criteria:
 1. Problem_&_Customer_Pain

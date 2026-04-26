@@ -525,3 +525,382 @@ def test_process_document_propagates_startup_id_from_run(monkeypatch, tmp_path):
         metadata = json.loads(refreshed_doc.artifact_metadata_json)
         canonical = metadata.get("canonical_evaluation")
         assert canonical["startup_id"] == "startup-999"
+
+
+def test_aggregate_surfaces_document_failure_reason_when_no_canonical(monkeypatch):
+    engine = _mk_engine()
+
+    with Session(engine) as session:
+        run = EvaluationRun(startup_id="startup-failed", status="queued")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        doc = EvaluationDocument(
+            evaluation_run_id=run.id,
+            document_id="doc-bp-failed",
+            document_type="business_plan",
+            processing_status="failed",
+            extraction_status="failed",
+            source_file_url_or_path="dummy.pdf",
+            summary="1 validation error for CanonicalNarrative: FINANCIAL_IMPROVEMENT",
+        )
+        session.add(doc)
+        session.commit()
+        run_id = run.id
+
+    def _fake_get_session():
+        with Session(engine) as s:
+            yield s
+
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.aggregate_evaluation.get_session",
+        _fake_get_session,
+    )
+
+    aggregate_evaluation_run(run_id)
+
+    with Session(engine) as verify:
+        refreshed = verify.get(EvaluationRun, run_id)
+        assert refreshed.status == "failed"
+        assert "Document failures:" in (refreshed.failure_reason or "")
+        assert "FINANCIAL_IMPROVEMENT" in (refreshed.failure_reason or "")
+
+
+def test_process_document_accepts_financial_improvement_recommendation(monkeypatch, tmp_path):
+    from src.modules.evaluation.application.use_cases.process_document import process_document
+
+    engine = _mk_engine()
+    pdf_path = tmp_path / "business-plan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 test")
+
+    with Session(engine) as session:
+        run = EvaluationRun(startup_id="startup-bp", status="processing")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        doc = EvaluationDocument(
+            evaluation_run_id=run.id,
+            document_id="doc-bp",
+            document_type="business_plan",
+            processing_status="queued",
+            extraction_status="pending",
+            source_file_url_or_path=str(pdf_path),
+        )
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+        doc_id = doc.id
+
+    def _fake_get_session():
+        with Session(engine) as s:
+            yield s
+
+    class _ClsItem:
+        def __init__(self, value: str):
+            self.value = value
+            self.confidence = "Medium"
+            self.resolution_source = "inferred"
+            self.supporting_evidence_locations = []
+
+    class _FakeClassification:
+        stage = _ClsItem("Seed")
+        main_industry = _ClsItem("AI")
+        subindustry = _ClsItem("SaaS")
+        operational_notes = []
+
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+        def model_copy(self, update=None):
+            return self
+
+    class _FakeEvidenceCriterion:
+        gaps = []
+
+    class _FakeEvidence:
+        criteria_evidence = [_FakeEvidenceCriterion()]
+
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+    class _FakeRaw:
+        pass
+
+    class _FakeNarrative:
+        overall_explanation = "ok"
+        top_strengths = ["s"]
+        top_concerns = ["c"]
+
+    class _FakeRecommendation:
+        def model_dump(self):
+            return {
+                "category": "FINANCIAL_IMPROVEMENT",
+                "priority": 1,
+                "recommendation": "Bo sung mo hinh tai chinh chi tiet.",
+                "rationale": "Nha dau tu can thay dong tien va gia dinh ro rang.",
+                "expected_impact": "Business_Model_&_Go_to_Market",
+            }
+
+    class _FakeReport:
+        overall_result_narrative = _FakeNarrative()
+        recommendations = [_FakeRecommendation()]
+        key_questions = []
+        operational_notes = []
+        top_risks = []
+
+    class _FakePipeline:
+        def __init__(self, pack_name: str):
+            self.pack_name = pack_name
+
+        def classify_startup(self, full_text, images, classification_context=None):
+            return _FakeClassification()
+
+        def map_evidence(self, full_text, images):
+            return _FakeEvidence()
+
+        def judge_raw_criteria(self, evidence_result_json, full_text, images):
+            return _FakeRaw()
+
+        def write_report(self, scoring_result_json, document_type="pitch_deck", classification_json="{}"):
+            return _FakeReport()
+
+    class _FakeScorer:
+        def __init__(self, total_pages=1):
+            self.total_pages = total_pages
+
+        def score(self, classification, evidence, raw_judgments):
+            return DeterministicScoringResult(
+                effective_weights={"Problem_&_Customer_Pain": 1.0},
+                criteria_results=[
+                    CanonicalCriterionResult(
+                        criterion="Problem_&_Customer_Pain",
+                        status="scored",
+                        raw_score=70.0,
+                        final_score=70.0,
+                        weighted_contribution=70.0,
+                        confidence="Medium",
+                        cap_summary=CapSummary(
+                            core_cap=10.0,
+                            stage_cap=10.0,
+                            evidence_quality_cap=10.0,
+                            contradiction_cap=10.0,
+                            contradiction_penalty_points=0.0,
+                        ),
+                        evidence_strength_summary="DIRECT",
+                        evidence_locations=[],
+                        supporting_pages_count=1,
+                        strengths=["x"],
+                        concerns=[],
+                        explanation="ok",
+                    )
+                ],
+                overall_result=CanonicalOverallResult(
+                    overall_score=70.0,
+                    overall_confidence="Medium",
+                    evidence_coverage="moderate",
+                    interpretation_band="strong",
+                    stage_context_note="Seed",
+                ),
+                processing_warnings=[],
+            )
+
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.get_session",
+        _fake_get_session,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.PipelineLLMServices",
+        _FakePipeline,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.DeterministicScoringService",
+        _FakeScorer,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.PDFParser.extract_text_and_images",
+        lambda local_file_path, extract_images=True: [
+            {"text": "hello", "image_path": None}],
+    )
+
+    process_document(doc_id)
+
+    with Session(engine) as verify:
+        refreshed_doc = verify.get(EvaluationDocument, doc_id)
+        assert refreshed_doc.processing_status == "completed"
+        metadata = json.loads(refreshed_doc.artifact_metadata_json)
+        report = metadata["canonical_evaluation"]["narrative"]
+        assert report["recommendations"][0]["category"] == "FINANCIAL_IMPROVEMENT"
+
+
+def test_process_document_normalizes_single_source_evidence_ids(monkeypatch, tmp_path):
+    from src.modules.evaluation.application.use_cases.process_document import process_document
+    from src.modules.evaluation.application.dto.canonical_schema import EvidenceLocation
+
+    engine = _mk_engine()
+    pdf_path = tmp_path / "single-source.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 test")
+
+    with Session(engine) as session:
+        run = EvaluationRun(startup_id="startup-docid", status="processing")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        doc = EvaluationDocument(
+            evaluation_run_id=run.id,
+            document_id="doc-public-id",
+            document_type="business_plan",
+            processing_status="queued",
+            extraction_status="pending",
+            source_file_url_or_path=str(pdf_path),
+        )
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+        doc_id = doc.id
+
+    def _fake_get_session():
+        with Session(engine) as s:
+            yield s
+
+    class _ClsItem:
+        def __init__(self, value: str):
+            self.value = value
+            self.confidence = "Medium"
+            self.resolution_source = "inferred"
+            self.supporting_evidence_locations = [
+                {
+                    "source_id": "stale-id",
+                    "slide_number_or_page_number": 2,
+                    "excerpt_or_summary": "evidence",
+                    "section_name": "Team",
+                }
+            ]
+
+    class _FakeClassification:
+        stage = _ClsItem("Seed")
+        main_industry = _ClsItem("AI")
+        subindustry = _ClsItem("SaaS")
+        operational_notes = []
+
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+        def model_copy(self, update=None):
+            return self
+
+    class _FakeEvidenceCriterion:
+        gaps = []
+
+    class _FakeEvidence:
+        criteria_evidence = [_FakeEvidenceCriterion()]
+
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+    class _FakeRaw:
+        pass
+
+    class _FakeNarrative:
+        overall_explanation = "ok"
+        top_strengths = ["s"]
+        top_concerns = ["c"]
+
+    class _FakeReport:
+        overall_result_narrative = _FakeNarrative()
+        recommendations = []
+        key_questions = []
+        operational_notes = []
+        top_risks = []
+
+    class _FakePipeline:
+        def __init__(self, pack_name: str):
+            self.pack_name = pack_name
+
+        def classify_startup(self, full_text, images, classification_context=None):
+            return _FakeClassification()
+
+        def map_evidence(self, full_text, images):
+            return _FakeEvidence()
+
+        def judge_raw_criteria(self, evidence_result_json, full_text, images):
+            return _FakeRaw()
+
+        def write_report(self, scoring_result_json, document_type="pitch_deck", classification_json="{}"):
+            return _FakeReport()
+
+    class _FakeScorer:
+        def __init__(self, total_pages=1):
+            self.total_pages = total_pages
+
+        def score(self, classification, evidence, raw_judgments):
+            return DeterministicScoringResult(
+                effective_weights={"Problem_&_Customer_Pain": 1.0},
+                criteria_results=[
+                    CanonicalCriterionResult(
+                        criterion="Problem_&_Customer_Pain",
+                        status="scored",
+                        raw_score=70.0,
+                        final_score=70.0,
+                        weighted_contribution=70.0,
+                        confidence="Medium",
+                        cap_summary=CapSummary(
+                            core_cap=10.0,
+                            stage_cap=10.0,
+                            evidence_quality_cap=10.0,
+                            contradiction_cap=10.0,
+                            contradiction_penalty_points=0.0,
+                        ),
+                        evidence_strength_summary="DIRECT",
+                        evidence_locations=[
+                            EvidenceLocation(
+                                source_type="Business Plan",
+                                source_id="wrong-id",
+                                slide_number_or_page_number=3,
+                                excerpt_or_summary="proof",
+                            )
+                        ],
+                        supporting_pages_count=1,
+                        strengths=["x"],
+                        concerns=[],
+                        explanation="ok",
+                    )
+                ],
+                overall_result=CanonicalOverallResult(
+                    overall_score=70.0,
+                    overall_confidence="Medium",
+                    evidence_coverage="moderate",
+                    interpretation_band="strong",
+                    stage_context_note="Seed",
+                ),
+                processing_warnings=[],
+            )
+
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.get_session",
+        _fake_get_session,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.PipelineLLMServices",
+        _FakePipeline,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.DeterministicScoringService",
+        _FakeScorer,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.PDFParser.extract_text_and_images",
+        lambda local_file_path, extract_images=True: [
+            {"text": "hello", "image_path": None}],
+    )
+
+    process_document(doc_id)
+
+    with Session(engine) as verify:
+        refreshed_doc = verify.get(EvaluationDocument, doc_id)
+        metadata = json.loads(refreshed_doc.artifact_metadata_json)
+        canonical = metadata["canonical_evaluation"]
+        assert canonical["classification"]["stage"]["supporting_evidence_locations"][0]["source_id"] == "doc-public-id"
+        assert canonical["criteria_results"][0]["evidence_locations"][0]["source_id"] == "doc-public-id"

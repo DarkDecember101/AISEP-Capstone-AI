@@ -16,7 +16,10 @@ from src.modules.evaluation.application.dto.evaluation_schema import (
 from src.modules.evaluation.application.dto.canonical_schema import CanonicalEvaluationResult
 from src.modules.evaluation.application.use_cases.submit_evaluation import submit_evaluation
 from src.modules.evaluation.application.use_cases.merge_evaluation import merge_canonical_results
-from src.modules.evaluation.application.services.report_validity import validate_canonical_report
+from src.modules.evaluation.application.services.report_validity import (
+    sanitize_canonical_report,
+    validate_canonical_report,
+)
 
 router = APIRouter()
 logger = logging.getLogger("aisep.evaluation")
@@ -221,6 +224,7 @@ def get_evaluation_report(id: int, session: Session = Depends(get_session)):
                                message="No completed business_plan document found.")
             canonical_dict = _load_canonical_from_doc(bp_docs[0], run)
 
+        canonical_dict = sanitize_canonical_report(canonical_dict)
         validity = validate_canonical_report(canonical_dict)
         if not validity.is_valid:
             raise APIError(status_code=409, code="EVALUATION_INVALID_REPORT",

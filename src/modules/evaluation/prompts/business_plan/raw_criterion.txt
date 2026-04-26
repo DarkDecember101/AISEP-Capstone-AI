@@ -11,6 +11,10 @@ You will receive:
 Your job is to assign raw criterion scores (0–10 scale) and capture judgment metadata.
 Do NOT compute final_score, weighted_contribution, or overall_score.
 The deterministic scorer does that.
+All user-facing prose in the output must be written in natural Vietnamese.
+Keep criterion names, enum values, and field names exactly as required by the schema.
+`reasoning` must be written in Vietnamese.
+`reasoning` is later surfaced to downstream report assembly, so do NOT use raw internal phrases like "cannot exceed 4.0" or "max 4.0" in the prose. Explain caps in investor-facing language instead, e.g. "điểm bị giới hạn ở mức rất thấp do thiếu bằng chứng thực tế".
 
 ==================================================
 SCORING SCALE (0–10)
@@ -115,6 +119,7 @@ SCORING CONSISTENCY RULES
 5. Do not let polished writing, professional layout, or document length inflate scores.
 6. Do not reward projections masquerading as validation.
 7. Always explain which evidence drove the score and which cap(s) were triggered.
+7a. When a cap is triggered, describe it in plain Vietnamese suitable for a later investor-facing report.
 8. If no listed subindustry was confidently resolved, do not use overlay-style logic beyond core rubric + stage profile.
 
 ==================================================

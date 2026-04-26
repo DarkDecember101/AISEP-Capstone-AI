@@ -18,10 +18,13 @@ You will receive two structured inputs:
 
 Your task:
 Write the final narrative output based ONLY on the provided classification and scoring output.
+All user-facing narrative text must be written in natural Vietnamese.
+Keep field names, enum values, criterion names, and category codes exactly as required in the JSON schema; only the prose content should be Vietnamese.
 
 Generate:
 - top_strengths (max 5 plain-text strings)
 - top_concerns (max 5 plain-text strings)
+- top_risks (4-6 structured items when the deck shows multiple material weaknesses)
 - overall_explanation
 - recommendations (max 5)
 - key_questions (max 5)
@@ -31,8 +34,10 @@ Rules:
 - Do not change any scores.
 - Do not introduce new evidence.
 - Do not invent missing strengths or concerns.
+- Do not invent risks that are unsupported by the scoring result, concerns, missing information, explanations, or evidence gaps.
 - Recommendations must be stage-appropriate and tied to actual concerns or evidence gaps.
 - Key questions must resolve real uncertainty, not generic advice.
+- top_strengths, top_concerns, overall_explanation, recommendation, rationale, question, and operational_notes must all be in Vietnamese.
 
 SCORE-NARRATIVE CONSISTENCY (MANDATORY — violations cause the report to be regenerated):
 - Read the criteria_results in the scoring JSON. Each entry has a final_score.
@@ -47,15 +52,41 @@ STAGE CONSISTENCY (MANDATORY):
 - All narrative text must use language appropriate for that exact stage.
 - If stage = SEED: never use "pre-seed", "pre seed", "seeking first customers", or "validate the concept" language.
 - If stage = GROWTH: never use "pre-seed", "seed stage", or "build an MVP" language.
-- The executive_summary and overall_explanation must explicitly name the stage (e.g., "This SEED-stage venture...").
+- The executive_summary and overall_explanation must explicitly name the stage in Vietnamese (e.g., "Startup ở giai đoạn SEED...").
 
 SUBINDUSTRY NOTE (CONDITIONAL — write exactly one of the following as the first item in operational_notes):
 - Read classification.subindustry.confidence and classification.subindustry.value from the CLASSIFICATION block.
 - If subindustry.confidence = "High" and subindustry.value is not null/Unknown:
-    write: "Subindustry overlay applied: [subindustry value] (High confidence)."
+    write: "Đã áp dụng lớp đánh giá subindustry: [subindustry value] (độ tin cậy High)."
 - Otherwise (confidence Low/Medium, or value null/Unknown):
-    write: "No subindustry overlay was applied; only core rubric and stage profile were used."
-- NEVER write "no overlay was applied" when the CLASSIFICATION block shows a High-confidence subindustry.
+    write: "Không áp dụng lớp đánh giá subindustry; chỉ dùng rubric cốt lõi và stage profile."
+- NEVER write the Vietnamese equivalent of "no overlay was applied" when the CLASSIFICATION block shows a High-confidence subindustry.
+
+TOP_RISKS RULES (MANDATORY):
+- Each risk must be a JSON object with exactly 4 keys:
+  "risk_type", "severity", "description", "related_criterion".
+- If the report clearly contains multiple weaknesses, do NOT return only 1 risk.
+- For weak validation / thin evidence pitch decks, prefer 4-6 concrete risks.
+- Each risk description must be investor-facing, specific to this startup, and written in Vietnamese.
+- Use only grounded signals from:
+  criteria_results, concerns, missing_information, recommendations, evidence gaps, and explanations.
+- Do NOT add unsupported legal, regulatory, or fundraising risks.
+- When supported by the scoring result, top_risks should cover these categories:
+  Evidence quality risk
+  Market adoption risk
+  Execution risk
+  GTM monetization risk
+  Competitive differentiation risk
+  Technology feasibility risk
+- Risk descriptions must be specific. Avoid generic wording like "the startup faces competition" or "execution may be difficult."
+- Severity guidance:
+  High = directly affects investability, real-world validation, or feasibility now
+  Medium = important but can be reduced with more evidence, sharper GTM, or early testing
+  Low = secondary issue that does not materially change the current conclusion
+- For Validation_Traction_Evidence_Quality weakness, explicitly consider missing user feedback, pilot data, signed partners, revenue, usage metrics, or willingness-to-pay proof.
+- For Team_&_Execution_Readiness weakness, explicitly consider missing founder background, education, track record, or execution evidence.
+- For Business_Model_&_Go_to_Market weakness, explicitly consider missing pricing, CAC, conversion, sales motion, or channel clarity.
+- For Solution_&_Differentiation weakness, explicitly consider unverified claims versus competitors and unclear technology / matching performance.
 
 Return only valid JSON.
 
@@ -78,6 +109,14 @@ Required JSON shape (copy this structure exactly):
     ],
     "overall_explanation": "<3–5 sentence explanation naming the stage and interpretation band>"
   },
+  "top_risks": [
+    {
+      "risk_type": "<Evidence quality risk|Market adoption risk|Execution risk|GTM monetization risk|Competitive differentiation risk|Technology feasibility risk>",
+      "severity": "<High|Medium|Low>",
+      "description": "<specific investor-facing risk in Vietnamese>",
+      "related_criterion": "<one of the 6 canonical criterion names>"
+    }
+  ],
   "recommendations": [
     {
       "category": "EVIDENCE_GAP|STRATEGIC_CLARITY|VALIDATION_PRIORITY|DOCUMENT_IMPROVEMENT|RISK_MITIGATION|FINANCIAL_IMPROVEMENT",

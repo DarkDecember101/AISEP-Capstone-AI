@@ -87,7 +87,7 @@ class CanonicalCriterionResult(BaseModel):
 class CanonicalOverallResult(BaseModel):
     overall_score: Optional[float] = None
     overall_confidence: ConfidenceLevel
-    evidence_coverage: Literal["strong", "moderate", "weak"]
+    evidence_coverage: Literal["strong", "mixed", "moderate", "weak"]
     interpretation_band: Literal["weak", "below average",
                                  "promising but incomplete", "strong", "very strong"]
     stage_context_note: str
@@ -100,6 +100,7 @@ class Recommendation(BaseModel):
         "VALIDATION_PRIORITY",
         "DOCUMENT_IMPROVEMENT",
         "RISK_MITIGATION",
+        "FINANCIAL_IMPROVEMENT",
     ]
     priority: int = Field(ge=1, le=5)
     recommendation: str
@@ -112,10 +113,18 @@ class KeyQuestion(BaseModel):
     question: str
 
 
+class TopRisk(BaseModel):
+    risk_type: str
+    severity: Literal["High", "Medium", "Low"]
+    description: str
+    related_criterion: CriterionName
+
+
 class CanonicalNarrative(BaseModel):
     executive_summary: str
     top_strengths: List[str] = []
     top_concerns: List[str] = []
+    top_risks: List[TopRisk] = []
     missing_information: List[str] = []
     overall_explanation: str
     recommendations: List[Recommendation] = []

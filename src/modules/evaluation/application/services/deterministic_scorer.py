@@ -123,6 +123,56 @@ def calculate_contradiction_cap(severity: str) -> tuple:
     return 10.0, 0.0
 
 
+def _compute_final_score(raw_score: float | None, effective_cap: float, contradiction_penalty: float) -> float | None:
+    if raw_score is None:
+        return None
+    math_score = min(raw_score, effective_cap) - contradiction_penalty
+    return max(0.0, math_score) * 10.0
+
+
+def _derive_interpretation_band(overall_score: float | None) -> str:
+    band = "weak"
+    if overall_score:
+        if overall_score >= 85:
+            band = "very strong"
+        elif overall_score >= 70:
+            band = "strong"
+        elif overall_score >= 50:
+            band = "promising but incomplete"
+        elif overall_score >= 35:
+            band = "below average"
+    return band
+
+
+def _derive_evidence_coverage(criteria_results: list[CanonicalCriterionResult], avg_conf: float) -> str:
+    strong_count = 0
+    moderate_count = 0
+    weak_count = 0
+    traction_is_weak_or_contradictory = False
+
+    for result in criteria_results:
+        strength = result.evidence_strength_summary
+        if result.criterion == "Validation_Traction_Evidence_Quality":
+            traction_is_weak_or_contradictory = (
+                result.status == "contradictory" or strength in {"INDIRECT", "ABSENT"}
+            )
+
+        if result.status == "contradictory" or strength == "ABSENT":
+            weak_count += 1
+        elif strength == "INDIRECT" or result.status == "insufficient_evidence":
+            moderate_count += 1
+        else:
+            strong_count += 1
+
+    if traction_is_weak_or_contradictory:
+        return "mixed" if strong_count > 0 else "moderate"
+    if weak_count == 0 and moderate_count <= 1 and strong_count >= 4 and avg_conf > 0.6:
+        return "strong"
+    if weak_count >= 3 and strong_count == 0:
+        return "weak"
+    return "moderate"
+
+
 class DeterministicScoringService:
     def __init__(self, total_pages: int = 100):
         self.total_pages = total_pages
@@ -142,12 +192,11 @@ class DeterministicScoringService:
             stage, STAGE_WEIGHT_PROFILES["MVP"]).copy()
         if stage not in STAGE_WEIGHT_PROFILES:
             self.warnings.append(
-                f"Unknown stage '{stage}' — falling back to MVP weight profile."
+                f"Unknown stage '{stage}' — using MVP weight profile as fallback."
             )
 
         final_criteria = []
         overall_score = 0.0
-        active_weights_sum = 0.0
         confidences = []
 
         from src.modules.evaluation.domain.scoring_policy import normalize_to_canonical_criterion_name
@@ -190,7 +239,7 @@ class DeterministicScoringService:
                     evidence_strength_summary="ABSENT",
                     evidence_locations=[],
                     supporting_pages_count=0,
-                    explanation=f"Missing evaluation data for {canon_key}."
+                    explanation=f"Thiếu dữ liệu đánh giá cho tiêu chí {canon_key}."
                 ))
                 continue
 
@@ -227,25 +276,24 @@ class DeterministicScoringService:
             elif severity == "severe":
                 status = "contradictory"
 
-            final_c_score = None
-            if status == "scored" and raw_j.raw_score is not None:
-                math_score = min(raw_j.raw_score, effective_cap) - contra_pen
-                final_c_score = max(0.0, math_score) * 10.0
+            final_c_score = _compute_final_score(
+                raw_j.raw_score, effective_cap, contra_pen
+            )
 
-            if final_c_score is None and status == "scored":
+            if final_c_score is None and status in {"scored", "contradictory"}:
                 status = "insufficient_evidence"
 
             cf = {"High": 1.0, "Medium": 0.5, "Low": 0.1}.get(
                 raw_j.criterion_confidence, 0.5)
             confidences.append(cf)
 
-            weight = weights.get(canon_key, 16.66) / 100.0
+            weight_pct = weights.get(canon_key, 16.66)
+            weight = weight_pct / 100.0
             weighted_contrib = None
 
             if final_c_score is not None:
                 weighted_contrib = final_c_score * weight
                 overall_score += weighted_contrib
-                active_weights_sum += weight
 
             final_criteria.append(CanonicalCriterionResult(
                 criterion=canon_key,
@@ -266,23 +314,10 @@ class DeterministicScoringService:
                 explanation=raw_j.reasoning
             ))
 
-        if active_weights_sum > 0:
-            overall_score = overall_score / active_weights_sum
-        else:
+        if not any(c.weighted_contribution is not None for c in final_criteria):
             overall_score = None
             self.warnings.append(
                 "No active criterion weights could be evaluated. Overall score is omitted.")
-
-        band = "weak"
-        if overall_score:
-            if overall_score >= 85:
-                band = "very strong"
-            elif overall_score >= 70:
-                band = "strong"
-            elif overall_score >= 50:
-                band = "promising but incomplete"
-            elif overall_score >= 35:
-                band = "below average"
 
         overall_conf = "Medium"
         avg_conf = sum(confidences) / len(confidences) if confidences else 0
@@ -291,6 +326,9 @@ class DeterministicScoringService:
         elif avg_conf < 0.3:
             overall_conf = "Low"
 
+        band = _derive_interpretation_band(overall_score)
+        evidence_coverage = _derive_evidence_coverage(final_criteria, avg_conf)
+
         # Temporary object passing back before wrapping in CanonicalEvaluationResult
         return DeterministicScoringResult(**{
             'effective_weights': weights,
@@ -298,10 +336,9 @@ class DeterministicScoringService:
             'overall_result': OverallResult(
                 overall_score=overall_score,
                 overall_confidence=overall_conf,
-                evidence_coverage="strong" if avg_conf > 0.6 else (
-                    "weak" if avg_conf < 0.3 else "moderate"),
+                evidence_coverage=evidence_coverage,
                 interpretation_band=band,
-                stage_context_note=f"Evaluated against standard benchmarks for {stage} stage."
+                stage_context_note=f"Được đánh giá theo chuẩn tham chiếu của giai đoạn {stage}."
             ),
             'processing_warnings': self.warnings
         })

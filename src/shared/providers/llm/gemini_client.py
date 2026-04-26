@@ -4,9 +4,10 @@ import re
 import time
 from typing import Type, TypeVar
 
+import httpx
 from google import genai
 from google.genai import types, errors
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.shared.config.settings import settings
 from src.shared.logging.logger import setup_logger
@@ -26,6 +27,10 @@ class GeminiTransientError(Exception):
 
 class GeminiResponseParseError(Exception):
     pass
+
+
+def is_transient_gemini_error(exc: Exception) -> bool:
+    return isinstance(exc, GeminiTransientError)
 
 
 class GeminiClient:
@@ -110,6 +115,79 @@ class GeminiClient:
 
         return e
 
+    def _classify_transport_error(self, e: Exception) -> Exception:
+        if isinstance(e, (httpx.TimeoutException, httpx.TransportError)):
+            logger.warning("Gemini transport error: %s", e)
+            return GeminiTransientError(str(e))
+        return e
+
+    def _extract_json_substring(self, raw_text: str) -> str | None:
+        """Extract the outermost JSON object/array from noisy model output."""
+        if not raw_text:
+            return None
+
+        stripped = raw_text.strip()
+        fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
+        if fenced:
+            stripped = fenced.group(1).strip()
+
+        if stripped.startswith("{") and stripped.endswith("}"):
+            return stripped
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return stripped
+
+        obj_start = stripped.find("{")
+        obj_end = stripped.rfind("}")
+        if obj_start != -1 and obj_end > obj_start:
+            return stripped[obj_start:obj_end + 1]
+
+        arr_start = stripped.find("[")
+        arr_end = stripped.rfind("]")
+        if arr_start != -1 and arr_end > arr_start:
+            return stripped[arr_start:arr_end + 1]
+
+        return None
+
+    def _parse_structured_response(
+        self,
+        response,
+        response_schema: Type[T],
+    ) -> T:
+        parsed = getattr(response, "parsed", None)
+        if isinstance(parsed, response_schema):
+            return parsed
+        if isinstance(parsed, BaseModel):
+            return response_schema(**parsed.model_dump())
+        if isinstance(parsed, dict):
+            return response_schema(**parsed)
+
+        response_text = getattr(response, "text", None)
+        if not response_text:
+            raise GeminiResponseParseError("Gemini returned empty structured response.")
+
+        candidate_payloads = [response_text]
+        extracted = self._extract_json_substring(response_text)
+        if extracted and extracted != response_text:
+            candidate_payloads.append(extracted)
+
+        last_error: Exception | None = None
+        for payload in candidate_payloads:
+            try:
+                result_dict = json.loads(payload)
+                return response_schema(**result_dict)
+            except (json.JSONDecodeError, ValidationError) as e:
+                last_error = e
+
+        preview = re.sub(r"\s+", " ", response_text).strip()[:240]
+        if isinstance(last_error, ValidationError):
+            raise GeminiResponseParseError(
+                f"Gemini returned schema-invalid structured output: {last_error}"
+            ) from last_error
+
+        raise GeminiResponseParseError(
+            f"Invalid JSON returned by Gemini: {last_error}. Response preview: {preview}"
+        ) from last_error
+
     def generate_structured(
         self,
         prompt: str,
@@ -147,8 +225,7 @@ class GeminiClient:
                     raise GeminiResponseParseError(
                         "Gemini returned empty response.text")
 
-                result_dict = json.loads(response.text)
-                return response_schema(**result_dict)
+                return self._parse_structured_response(response, response_schema)
 
             except errors.APIError as e:
                 classified = self._classify_api_error(e)
@@ -174,18 +251,36 @@ class GeminiClient:
 
                 raise
 
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode Gemini JSON response: {e}")
-                last_error = GeminiResponseParseError(
-                    f"Invalid JSON returned by Gemini: {e}")
+            except GeminiResponseParseError as e:
+                logger.error("Failed to parse Gemini structured response: %s", e)
+                last_error = e
                 if attempt > self.max_retries:
                     raise last_error from e
                 wait_seconds = min(5 * attempt, 30)
                 logger.warning(
-                    f"JSON parse error from Gemini (attempt {attempt}/{self.max_retries + 1}). "
+                    f"Structured parse error from Gemini (attempt {attempt}/{self.max_retries + 1}). "
                     f"Retrying in {wait_seconds}s..."
                 )
                 time.sleep(wait_seconds)
+                continue
+
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                classified = self._classify_transport_error(e)
+                if attempt > self.max_retries:
+                    raise classified from e
+
+                wait_seconds = self._extract_retry_seconds(
+                    str(e),
+                    default=min(5 * attempt, 30),
+                )
+                logger.warning(
+                    "Transient Gemini transport error (attempt %s/%s). Retrying in %ss...",
+                    attempt,
+                    self.max_retries + 1,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                last_error = classified
                 continue
 
             except Exception as e:

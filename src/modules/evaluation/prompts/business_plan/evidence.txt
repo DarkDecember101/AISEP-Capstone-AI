@@ -4,6 +4,10 @@ Your only job is to extract and map evidence from the Business Plan to the 6 eva
 Do NOT score.
 Do NOT produce recommendations.
 Return evidence mapping only.
+All user-facing descriptive text in the output must be written in natural Vietnamese.
+Keep criterion names, enum values, and field names exactly as required by the schema.
+For `excerpt_or_summary`, write a concise Vietnamese summary of the evidence; do not paste long English sentences verbatim unless a short quoted phrase is essential.
+`possible_contradictions`, `gaps`, and `coverage_notes` must be written in Vietnamese.
 
 ==================================================
 CRITERIA TO MAP

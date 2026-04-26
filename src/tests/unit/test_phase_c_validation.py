@@ -276,7 +276,7 @@ class TestSubindustryAutoCorrection:
         # Conflicting note removed
         assert not any("no specific subindustry" in n.lower() for n in notes)
         # Correct note injected
-        assert any("MARKETING_TECH" in n and "confirmed" in n.lower()
+        assert any("MARKETING_TECH" in n and "subindustry" in n.lower()
                    for n in notes)
         # Warning logged in processing_warnings
         assert any(
@@ -293,7 +293,7 @@ class TestSubindustryAutoCorrection:
         )
         result = sanitize_canonical_report(canon)
         notes = result["narrative"]["operational_notes"]
-        assert any("MARKETING_TECH" in n and "confirmed" in n.lower()
+        assert any("MARKETING_TECH" in n and "subindustry" in n.lower()
                    for n in notes)
 
     def test_15_expanded_pattern_no_overlay_was_applied(self):
@@ -306,7 +306,7 @@ class TestSubindustryAutoCorrection:
         )
         result = sanitize_canonical_report(canon)
         notes = result["narrative"]["operational_notes"]
-        assert any("MARKETING_TECH" in n and "confirmed" in n.lower()
+        assert any("MARKETING_TECH" in n and "subindustry" in n.lower()
                    for n in notes)
 
     def test_16_low_confidence_subindustry_not_corrected(self):
@@ -1344,7 +1344,7 @@ class TestMalformedFieldSanitizer:
         from src.modules.evaluation.application.services.report_validity import sanitize_canonical_report
         canon = _make_canonical()
         canon["narrative"]["operational_notes"] = [
-            '{"overlay_applied": "MARKETING_TECH confirmed", "document_quality_observations": []}',
+            '{"overlay_applied": "Đã áp dụng lớp đánh giá subindustry: MARKETING_TECH", "document_quality_observations": []}',
         ]
         result = sanitize_canonical_report(canon)
         notes = result["narrative"]["operational_notes"]
@@ -1366,10 +1366,10 @@ class TestMalformedFieldSanitizer:
         """Clean plain-string fields must pass through unchanged."""
         from src.modules.evaluation.application.services.report_validity import sanitize_canonical_report
         canon = _make_canonical(
-            op_notes=["Subindustry overlay applied: MARKETING_TECH (High confidence)."])
+            op_notes=["Đã áp dụng lớp đánh giá subindustry: MARKETING_TECH (độ tin cậy High)."])
         result = sanitize_canonical_report(canon)
         notes = result["narrative"]["operational_notes"]
-        assert notes[0] == "Subindustry overlay applied: MARKETING_TECH (High confidence)."
+        assert notes[0] == "Đã áp dụng lớp đánh giá subindustry: MARKETING_TECH (độ tin cậy High)."
         assert not any(
             "AUTO_FLATTENED" in w for w in result["processing_warnings"])
 

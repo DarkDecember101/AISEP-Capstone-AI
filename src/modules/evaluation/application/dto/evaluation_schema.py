@@ -207,7 +207,7 @@ class AggregatedReportSchema(BaseModel):
     dimension_scores: Dict[str, float]
     executive_summary: str
     top_strengths: List[str]
-    top_risks: List[str]
+    top_risks: List[Dict[str, Any]]
     missing_information: List[str]
     criteria_details: List[CriterionResultSchema]
     processing_warnings: List[str] = Field(default_factory=list)

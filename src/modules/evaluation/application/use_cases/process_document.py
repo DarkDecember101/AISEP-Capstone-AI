@@ -15,12 +15,19 @@ from src.modules.evaluation.application.services.report_validity import (
     validate_canonical_report,
     sanitize_canonical_report,
 )
+from src.modules.evaluation.application.services.processing_warning_sanitizer import (
+    sanitize_processing_warnings,
+)
+from src.modules.evaluation.application.services.evidence_excerpt_localizer import (
+    localize_excerpts_in_results,
+)
 
 # New Pipeline Imports
 from src.modules.evaluation.application.services.pipeline_llm_services import PipelineLLMServices
 from src.modules.evaluation.application.services.deterministic_scorer import DeterministicScoringService
 from src.modules.evaluation.application.dto.pipeline_schema import ClassificationContextInput
 from src.modules.evaluation.application.services.reduce_bp_text import reduce_business_plan_text
+from src.shared.providers.llm.gemini_client import is_transient_gemini_error
 
 logger = setup_logger("process_document")
 
@@ -91,6 +98,7 @@ def process_document(document_id: int):
     run = session.query(EvaluationRun).filter(
         EvaluationRun.id == doc.evaluation_run_id).first()
 
+    transient_error: Exception | None = None
     try:
         local_file_path = resolve_document_source_to_local_path(
             doc.source_file_url_or_path)
@@ -209,6 +217,22 @@ def process_document(document_id: int):
         logger.info(f"Step 2: Evidence Mapping")
         evidence_res = pipeline_services.map_evidence(
             full_text=full_text, images=all_images)
+        localization_warnings: list[str] = []
+        try:
+            classification_res, evidence_res, localized_count = localize_excerpts_in_results(
+                classification_res=classification_res,
+                evidence_res=evidence_res,
+                translate_batch=pipeline_services.localize_evidence_excerpts,
+            )
+            if localized_count > 0:
+                localization_warnings.append(
+                    f"EVIDENCE_EXCERPTS_LOCALIZED: Localized {localized_count} excerpt value(s) to Vietnamese."
+                )
+        except Exception as exc:
+            logger.warning("Evidence excerpt localization skipped: %s", exc)
+            localization_warnings.append(
+                f"EVIDENCE_EXCERPT_LOCALIZATION_SKIPPED: {str(exc)}"
+            )
         evidence_json = evidence_res.model_dump_json(indent=2)
 
         logger.info(f"Step 3: Raw Judgments")
@@ -231,6 +255,9 @@ def process_document(document_id: int):
             CanonicalEvaluationResult, CanonicalNarrative
         )
 
+        _real_doc_id = str(doc.document_id) if getattr(
+            doc, "document_id", None) else str(doc.id)
+
         # Missing Information derived dynamically
         missing_info = list(set(
             [gap for cr in evidence_res.criteria_evidence for gap in cr.gaps] + scoring_res.processing_warnings))
@@ -250,6 +277,16 @@ def process_document(document_id: int):
                 d.get("criterion", "")
             )
             d["criterion"] = normalized if normalized else "Solution_&_Differentiation"
+            return d
+
+        def safe_risk(r):
+            d = r.model_dump()
+            normalized = normalize_to_canonical_criterion_name(
+                d.get("related_criterion", "")
+            )
+            d["related_criterion"] = normalized if normalized else "Solution_&_Differentiation"
+            severity = str(d.get("severity", "Medium")).strip().title()
+            d["severity"] = severity if severity in {"High", "Medium", "Low"} else "Medium"
             return d
 
         def safe_class(item):
@@ -306,7 +343,7 @@ def process_document(document_id: int):
                 excerpt, page_num, section_name = _parse_evidence_loc(raw_loc)
                 loc_entry = {
                     "source_type": source_type_label,
-                    "source_id": str(doc.id),
+                    "source_id": _real_doc_id,
                     "slide_number_or_page_number": max(1, int(page_num) if page_num else 1),
                     "excerpt_or_summary": excerpt or "",
                 }
@@ -332,6 +369,7 @@ def process_document(document_id: int):
             executive_summary=report_res.overall_result_narrative.overall_explanation,
             top_strengths=report_res.overall_result_narrative.top_strengths,
             top_concerns=report_res.overall_result_narrative.top_concerns,
+            top_risks=[safe_risk(r) for r in getattr(report_res, "top_risks", [])],
             missing_information=missing_info,
             overall_explanation=report_res.overall_result_narrative.overall_explanation,
             recommendations=[safe_recom(r)
@@ -352,14 +390,12 @@ def process_document(document_id: int):
             "operational_notes": getattr(classification_res, "operational_notes", [])
         }
 
-        _real_doc_id = str(doc.document_id) if getattr(
-            doc, "document_id", None) else str(doc.id)
         _PLACEHOLDER = "document_id_placeholder"
 
         def _fix_evidence_locs(locs: list) -> list:
-            """Replace source_id placeholders in a list of evidence location dicts."""
+            """Normalize single-source evidence locations to the canonical document id."""
             for ev in locs:
-                if isinstance(ev, dict) and ev.get("source_id") == _PLACEHOLDER:
+                if isinstance(ev, dict):
                     ev["source_id"] = _real_doc_id
             return locs
 
@@ -376,7 +412,9 @@ def process_document(document_id: int):
             "criteria_results": raw_criteria,
             "overall_result": scoring_res.overall_result.model_dump(),
             "narrative": narrative.model_dump(),
-            "processing_warnings": list(scoring_res.processing_warnings) + reduction_warnings,
+            "processing_warnings": sanitize_processing_warnings(
+                list(scoring_res.processing_warnings) + reduction_warnings + localization_warnings
+            ),
         }
 
         # Auto-correction pass: fix subindustry notes, filter contradictory recommendations
@@ -400,6 +438,10 @@ def process_document(document_id: int):
             for flag in validity.validation_flags:
                 logger.warning(
                     "Document %s post-assembly flag: %s", doc.id, flag)
+
+        canonical_dict["processing_warnings"] = sanitize_processing_warnings(
+            canonical_dict["processing_warnings"]
+        )
 
         canonical_result = CanonicalEvaluationResult(**canonical_dict)
 
@@ -437,11 +479,30 @@ def process_document(document_id: int):
 
     except Exception as e:
         logger.error(f"Failed doc process {doc.id}: {str(e)}", exc_info=True)
-        doc.processing_status = "failed"
-        doc.extraction_status = "failed"
-        doc.summary = str(e)
-        session.add(EvaluationLog(evaluation_run_id=doc.evaluation_run_id,
-                    step="evaluate_document", status="failed", message=str(e)))
+        if is_transient_gemini_error(e):
+            transient_error = e
+            doc.processing_status = "queued"
+            doc.extraction_status = "pending"
+            doc.summary = str(e)
+            session.add(EvaluationLog(
+                evaluation_run_id=doc.evaluation_run_id,
+                step="evaluate_document",
+                status="retry",
+                message=str(e),
+            ))
+        else:
+            doc.processing_status = "failed"
+            doc.extraction_status = "failed"
+            doc.summary = str(e)
+            session.add(EvaluationLog(
+                evaluation_run_id=doc.evaluation_run_id,
+                step="evaluate_document",
+                status="failed",
+                message=str(e),
+            ))
 
     finally:
         session.commit()
+
+    if transient_error is not None:
+        raise transient_error

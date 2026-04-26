@@ -219,6 +219,24 @@ class TestProcessEvaluationRunTask:
         assert mock_proc.call_count == 2
         mock_agg.assert_called_once_with(1)
 
+    @patch("src.modules.evaluation.application.use_cases.aggregate_evaluation.aggregate_evaluation_run")
+    @patch("src.modules.evaluation.application.use_cases.process_document.process_document")
+    @patch("src.shared.persistence.db.get_session")
+    def test_transient_document_error_skips_aggregate_and_bubbles_to_task_retry(self, mock_gs, mock_proc, mock_agg):
+        from src.modules.evaluation.workers.tasks import process_evaluation_run_task
+        from src.shared.providers.llm.gemini_client import GeminiTransientError
+
+        run = _make_fake_run(status="queued")
+        session = FakeSession(run=run, docs=[_make_fake_doc()])
+        mock_gs.return_value = iter([session])
+        mock_proc.side_effect = GeminiTransientError("socket reset")
+
+        with patch.object(process_evaluation_run_task, "max_retries", 0):
+            res = process_evaluation_run_task.apply(args=[1])
+
+        assert res.result["status"] == "failed"
+        mock_agg.assert_not_called()
+
 
 # ─── Integration Test: Submit Flow ───────────────────────────────────
 

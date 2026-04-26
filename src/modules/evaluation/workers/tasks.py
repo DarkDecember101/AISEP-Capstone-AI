@@ -22,6 +22,7 @@ Retry:
 from datetime import datetime
 from src.celery_app import celery_app
 from src.shared.logging.logger import setup_logger
+from src.shared.providers.llm.gemini_client import is_transient_gemini_error
 
 logger = setup_logger("celery_tasks")
 
@@ -153,6 +154,13 @@ def process_evaluation_run_task(self, evaluation_run_id: int):
                     "[task:doc:error] Document %s failed: %s",
                     doc.id, str(doc_err), exc_info=True,
                 )
+                if is_transient_gemini_error(doc_err):
+                    logger.warning(
+                        "[task:doc:retry] Document %s hit a transient Gemini error; retrying run %s.",
+                        doc.id,
+                        evaluation_run_id,
+                    )
+                    raise
                 # Document-level failure is persisted inside process_document
                 # itself; we continue to the next document.
 

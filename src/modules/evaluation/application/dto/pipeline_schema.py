@@ -137,8 +137,20 @@ class KeyQuestion(BaseModel):
     question: str
 
 
+class TopRiskItem(BaseModel):
+    risk_type: str
+    severity: Literal["High", "Medium", "Low"]
+    description: str
+    related_criterion: str
+
+
 class ReportWriterResult(BaseModel):
     overall_result_narrative: OverallResultNarrative
     recommendations: List[Recommendation] = Field(default_factory=list)
     key_questions: List[KeyQuestion] = Field(default_factory=list)
+    top_risks: List[TopRiskItem] = Field(default_factory=list)
     operational_notes: List[str] = Field(default_factory=list)
+
+
+class EvidenceExcerptLocalizationResult(BaseModel):
+    excerpts: List[str] = Field(default_factory=list)

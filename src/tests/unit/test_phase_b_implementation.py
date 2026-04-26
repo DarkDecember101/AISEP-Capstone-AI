@@ -257,9 +257,9 @@ class TestMergeEvaluation:
         merged = merge_canonical_results(pd, bp)
 
         merged_c = {c.criterion: c for c in merged.criteria_results}
-        # BP preferred (STRONG_DIRECT > DIRECT), score = 8.0
+        # Business Plan preferred (STRONG_DIRECT > DIRECT), score = 8.0
         assert merged_c["Problem_&_Customer_Pain"].final_score == 8.0
-        assert "BP preferred" in merged_c["Problem_&_Customer_Pain"].explanation
+        assert "ưu tiên Business Plan" in merged_c["Problem_&_Customer_Pain"].explanation
 
     def test_15b_merge_averages_when_both_direct(self):
         """When both are DIRECT, final_score is averaged."""
@@ -302,7 +302,7 @@ class TestMergeEvaluation:
         merged = merge_canonical_results(pd, bp)
 
         notes = merged.narrative.operational_notes
-        assert any("CLASSIFICATION_CONFLICT" in n for n in notes)
+        assert any("XUNG_ĐỘT_PHÂN_LOẠI" in n for n in notes)
 
     def test_17_merge_combines_strengths(self):
         from src.modules.evaluation.application.dto.canonical_schema import CanonicalEvaluationResult

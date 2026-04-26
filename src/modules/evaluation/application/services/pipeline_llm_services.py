@@ -7,6 +7,7 @@ from src.modules.evaluation.application.dto.pipeline_schema import (
     ClassificationResult,
     ClassificationContextInput,
     EvidenceMappingResult,
+    EvidenceExcerptLocalizationResult,
     RawCriterionJudgmentResult,
     ReportWriterResult
 )
@@ -40,6 +41,26 @@ class PipelineLLMServices:
         prompt = prompt_tmpl.replace(
             "{content}", full_text if full_text.strip() else "Visual document attached")
         return self.llm.generate_structured(prompt, EvidenceMappingResult, image_paths=images)
+
+    def localize_evidence_excerpts(self, excerpts: List[str]) -> List[str]:
+        if not excerpts:
+            return []
+
+        logger.info("[Step 2b] Localizing evidence excerpts to Vietnamese...")
+        prompt = (
+            "Rewrite each evidence excerpt into concise Vietnamese.\n"
+            "Requirements:\n"
+            "- Preserve factual meaning, numbers, company names, and product names.\n"
+            "- Keep each item short and audit-friendly.\n"
+            "- If an item is already good Vietnamese, keep it natural.\n"
+            "- Do not add markdown, bullets, or explanations.\n"
+            "- Return exactly the same number of items in the same order.\n\n"
+            f"EXCERPTS JSON:\n{json.dumps(excerpts, ensure_ascii=False)}"
+        )
+        result = self.llm.generate_structured(
+            prompt, EvidenceExcerptLocalizationResult
+        )
+        return result.excerpts
 
     def judge_raw_criteria(self, evidence_result_json: str, full_text: str, images: Optional[List[str]] = None) -> RawCriterionJudgmentResult:
         logger.info("[Step 3] Running Raw Criterion Judgment...")

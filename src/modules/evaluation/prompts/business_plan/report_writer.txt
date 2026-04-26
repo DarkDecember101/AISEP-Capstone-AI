@@ -17,27 +17,35 @@ You will receive two structured inputs:
 Your job is to generate the narrative layer of the evaluation report:
 - top strengths
 - top concerns
+- top risks
 - overall explanation
 - recommendations
 - key questions
 - operational notes
+All user-facing narrative text must be written in natural Vietnamese.
+Keep JSON keys, enum values, criterion names, and category codes unchanged; only the prose content should be Vietnamese.
 
 You must NOT change any scores, weights, caps, or evidence strength levels.
 Base your narrative strictly on the scoring result provided.
+- top_strengths, top_concerns, overall_explanation, recommendation, rationale, question, and operational_notes must all be in Vietnamese.
 
 SCORE-NARRATIVE CONSISTENCY (MANDATORY — violations cause regeneration):
 - Any criterion with final_score >= 75 MUST appear in top_strengths, NOT in top_concerns.
 - top_concerns MUST only reference criteria with final_score < 65 or insufficient_evidence/contradictory criteria.
+- If Validation_Traction_Evidence_Quality is insufficient_evidence, ABSENT, INDIRECT, or final_score < 30, top_concerns MUST NOT be empty and MUST include at least 2 concrete concerns about missing validation / missing traction evidence.
 - recommendations MUST only address criteria with final_score < 65, evidence gaps, or contradictions.
 - NEVER describe a criterion that scored >= 75 as "weak", "limited", "absent", or "unvalidated".
 - If Validation_Traction_Evidence_Quality scored >= 75, do NOT write about "limited validation", "lack of traction", or "seeking early validation".
+- Do NOT leak internal 0-10 cap language into user-facing prose. Never write phrases like "cannot exceed 4.0", "capped at 4.0", or similar. Write in investor-facing 0-100 language instead.
+- If Team_&_Execution_Readiness is very high, but the supporting evidence is still from the startup's own business plan, acknowledge that the team looks strong in the provided document while noting that independent verification is still needed.
+- If the source material claims no competitor solves the problem as well as the startup, write it with a caveat such as "Theo tài liệu cung cấp, startup cho rằng..." and note that independent competitive verification is still needed.
 
 STAGE CONSISTENCY (MANDATORY):
 - Read the stage from the CLASSIFICATION block below: classification.stage.value.
 - All narrative text must use language appropriate for that exact stage.
 - If stage = SEED: never use "pre-seed", "pre seed", "seeking first customers", or "validate the concept" language.
 - If stage = GROWTH: never use "pre-seed", "seed stage", or "build an MVP" language.
-- The overall_explanation must explicitly name the stage (e.g., "This SEED-stage venture...").
+- The overall_explanation must explicitly name the stage in Vietnamese (e.g., "Startup ở giai đoạn SEED...").
 
 ==================================================
 OUTPUT RULES
@@ -54,6 +62,18 @@ top_concerns:
 - Each must reference a specific criterion and a specific cap, gap, or contradiction from the scoring result.
 - Do not repeat generic warnings.
 - Order from most impactful to least.
+
+top_risks:
+- Maximum 5.
+- MUST be present when validation / traction evidence is weak, absent, contradictory, or mostly projected.
+- Use concise investor-facing risk labels and descriptions.
+- Typical acceptable risks include:
+  Market adoption risk
+  Evidence quality risk
+  Competitive differentiation risk
+  Execution risk
+  Fundraising risk
+- Do not leave top_risks empty if the startup still lacks real-world validation.
 
 overall_explanation:
 - 3 to 5 sentences.
@@ -80,9 +100,9 @@ operational_notes:
 - Note any criteria with insufficient evidence or major caps.
 - SUBINDUSTRY NOTE (choose exactly one based on the CLASSIFICATION block):
   - Read classification.subindustry.confidence and classification.subindustry.value from the CLASSIFICATION block.
-  - If subindustry.confidence = "High" and value is not null/Unknown: write "Subindustry overlay applied: [value] (High confidence)."
-  - Otherwise: write "No subindustry overlay was applied; only core rubric and stage profile were used."
-  - NEVER write "no overlay was applied" when the CLASSIFICATION block shows a High-confidence subindustry.
+  - If subindustry.confidence = "High" and value is not null/Unknown: write "Đã áp dụng lớp đánh giá subindustry: [value] (độ tin cậy High)."
+  - Otherwise: write "Không áp dụng lớp đánh giá subindustry; chỉ dùng rubric cốt lõi và stage profile."
+  - NEVER write the Vietnamese equivalent of "no overlay was applied" when the CLASSIFICATION block shows a High-confidence subindustry.
 - Keep this section factual and brief.
 
 ==================================================
@@ -98,6 +118,14 @@ Do not add any explanation outside the JSON.
     "top_concerns": ["<concern 1>", "<concern 2>"],
     "overall_explanation": "<3–5 sentence explanation>"
   },
+  "top_risks": [
+    {
+      "risk_type": "<short risk label>",
+      "severity": "<High|Medium|Low>",
+      "description": "<investor-facing risk description>",
+      "related_criterion": "<criterion name>"
+    }
+  ],
   "recommendations": [
     {
       "category": "<EVIDENCE_GAP|STRATEGIC_CLARITY|VALIDATION_PRIORITY|DOCUMENT_IMPROVEMENT|RISK_MITIGATION|FINANCIAL_IMPROVEMENT>",

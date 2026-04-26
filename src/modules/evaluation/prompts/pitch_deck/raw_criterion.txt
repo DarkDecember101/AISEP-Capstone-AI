@@ -19,6 +19,10 @@ For each of the 6 criteria:
 5. identify whether a stage soft cap may be relevant
 6. identify contradiction severity ∈ {none, mild, moderate, severe}
 
+All user-facing prose in the output must be written in natural Vietnamese.
+Keep criterion names, enum values, and field names exactly as required by the schema.
+`reasoning` plus any cap reasons must be written in Vietnamese.
+
 Important:
 - Do NOT compute final_score.
 - Do NOT compute weighted contribution.

@@ -5,7 +5,10 @@ from src.shared.persistence.db import get_session
 from src.shared.persistence.models.evaluation_models import (
     EvaluationRun, EvaluationDocument, EvaluationCriteriaResult, EvaluationLog
 )
-from src.modules.evaluation.application.services.report_validity import validate_canonical_report
+from src.modules.evaluation.application.services.report_validity import (
+    sanitize_canonical_report,
+    validate_canonical_report,
+)
 from src.modules.evaluation.application.dto.canonical_schema import CanonicalEvaluationResult
 from src.modules.evaluation.application.use_cases.merge_evaluation import merge_canonical_results
 from src.shared.config.settings import settings
@@ -20,6 +23,28 @@ _MS_MERGED = "merged"               # merge succeeded; merged_artifact_json popu
 _MS_MERGE_FAILED = "merge_failed"         # merge attempted but raised exception
 # MERGE_EVAL_ENABLED=False; not attempted
 _MS_MERGE_DISABLED = "merge_disabled"
+
+
+def _build_no_success_failure_reason(docs: list[EvaluationDocument]) -> str:
+    """Surface the most actionable document failure details at run level."""
+    failure_summaries: list[str] = []
+    for doc in docs:
+        if doc.processing_status != "failed":
+            continue
+        summary = str(doc.summary or "").strip()
+        if not summary:
+            continue
+        label = f"{doc.document_type or 'document'}"
+        failure_summaries.append(f"{label}: {summary}")
+
+    if failure_summaries:
+        unique_summaries = list(dict.fromkeys(failure_summaries))
+        return "No canonical evaluation data produced. Document failures: " + " | ".join(unique_summaries[:2])
+
+    return (
+        "No canonical evaluation data produced. "
+        "Check document path/url, parser, and pipeline configuration."
+    )
 
 
 def aggregate_evaluation_run(run_id: int):
@@ -86,10 +111,7 @@ def aggregate_evaluation_run(run_id: int):
 
     if not success_docs:
         run.status = "failed"
-        run.failure_reason = (
-            "No canonical evaluation data produced. "
-            "Check document path/url, parser, and pipeline configuration."
-        )
+        run.failure_reason = _build_no_success_failure_reason(docs)
         if is_combined:
             run.merge_status = _MS_FALLBACK
         session.add(EvaluationLog(
@@ -232,6 +254,7 @@ def aggregate_evaluation_run(run_id: int):
 
         # ── Validate and persist run-level result ─────────────────────────────
         if canonical:
+            canonical = sanitize_canonical_report(canonical)
             validity = validate_canonical_report(canonical)
             if not validity.is_valid:
                 run.status = "failed"
