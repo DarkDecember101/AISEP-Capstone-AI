@@ -50,6 +50,20 @@ def _fallback_build_from_documents(state: GraphState) -> Dict[str, List[Any]]:
     return {"facts": facts, "claims": claims}
 
 
+def _claims_have_valid_support(
+    facts: List[FactItem],
+    claims_candidate: List[ClaimCandidate],
+) -> bool:
+    if not facts or not claims_candidate:
+        return False
+
+    fact_ids = {fact.fact_id for fact in facts}
+    for claim in claims_candidate:
+        if any(fact_id in fact_ids for fact_id in claim.supporting_fact_ids):
+            return True
+    return False
+
+
 async def run(state: GraphState) -> Dict[str, Any]:
     llm = GeminiClient()
     warnings = list(getattr(state, "processing_warnings", []))
@@ -156,7 +170,9 @@ Source material:
         warnings.append("fact_builder_llm_exception")
         logger.warning("Fact builder LLM failed: %r", error)
 
-    if not facts or not claims_candidate:
+    if not _claims_have_valid_support(facts, claims_candidate):
+        if facts and claims_candidate:
+            warnings.append("fact_builder_invalid_claim_fact_mapping")
         fallback = _fallback_build_from_documents(state)
         if not facts:
             facts = fallback["facts"]
@@ -176,6 +192,17 @@ Source material:
                 warnings.append("fact_builder_auto_claims_from_facts")
             else:
                 claims_candidate = fallback["claims"]
+        elif facts and not _claims_have_valid_support(facts, claims_candidate):
+            claims_candidate = [
+                ClaimCandidate(
+                    claim_id=f"auto_{f.fact_id}",
+                    claim_text=f.statement[:200],
+                    topic=f.topic,
+                    supporting_fact_ids=[f.fact_id],
+                )
+                for f in facts[:5]
+            ]
+            warnings.append("fact_builder_repaired_claim_fact_mapping")
         warnings.append("fact_builder_used_fallback")
 
     topic_summary: Dict[str, int] = {}

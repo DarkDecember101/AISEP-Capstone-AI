@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Mapping
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.shared.auth import require_internal_auth
 from src.shared.correlation import get_correlation_id
@@ -32,6 +32,7 @@ _GRAPH_STREAM_TIMEOUT_SECONDS = 240
 _stream_rate_limit = RateLimitDep("stream", settings.RATE_LIMIT_STREAM_RPM)
 
 _THREAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]{1,128}$")
+_DEFAULT_THREAD_ID = "default_thread"
 
 GRAPH_NODE_NAMES = [
     "followup_resolver",
@@ -57,7 +58,17 @@ logger.info(
 
 class ChatRequest(BaseModel):
     query: str
-    thread_id: str = Field(default="default_thread", max_length=128)
+    thread_id: str | None = Field(default=None, max_length=128)
+    thread_id_provided: bool = Field(default=False, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def capture_thread_id_presence(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            normalized = dict(data)
+            normalized["thread_id_provided"] = normalized.get("thread_id") is not None
+            return normalized
+        return data
 
     @field_validator("query")
     @classmethod
@@ -68,12 +79,31 @@ class ChatRequest(BaseModel):
 
     @field_validator("thread_id")
     @classmethod
-    def validate_thread_id(cls, v: str) -> str:
+    def validate_thread_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         if not _THREAD_ID_PATTERN.match(v):
             raise ValueError(
                 "thread_id must be 1-128 alphanumeric/dash/underscore characters."
             )
         return v
+
+    @model_validator(mode="after")
+    def normalize_thread_id(self) -> "ChatRequest":
+        if self.thread_id is None:
+            if settings.INVESTOR_AGENT_REQUIRE_THREAD_ID:
+                raise ValueError("thread_id is required.")
+            self.thread_id = _DEFAULT_THREAD_ID
+            return self
+
+        if (
+            settings.INVESTOR_AGENT_REQUIRE_THREAD_ID
+            and self.thread_id == _DEFAULT_THREAD_ID
+        ):
+            raise ValueError(
+                "thread_id must not use the reserved default_thread value."
+            )
+        return self
 
 
 # ── Stable metadata shape ───────────────────────────────────────────
@@ -137,7 +167,12 @@ def _chunk_text(text: str, chunk_size: int = 180) -> List[str]:
     return [content[index:index + chunk_size] for index in range(0, len(content), chunk_size)]
 
 
-def _build_chat_payload(final_state: Mapping[str, Any]) -> Dict[str, Any]:
+def _build_chat_payload(
+    final_state: Mapping[str, Any],
+    *,
+    thread_id_used: str,
+    extra_processing_warnings: List[str] | None = None,
+) -> Dict[str, Any]:
     logger.info(
         "Pre-assembler state: verified=%s conflicting=%s caveats=%s warnings=%s",
         len(final_state.get("verified_claims") or []),
@@ -154,6 +189,11 @@ def _build_chat_payload(final_state: Mapping[str, Any]) -> Dict[str, Any]:
         assembled.get("fallback_triggered", False),
     )
 
+    processing_warnings = list(assembled.get("processing_warnings", []))
+    for warning in extra_processing_warnings or []:
+        if warning not in processing_warnings:
+            processing_warnings.append(warning)
+
     return {
         "intent": assembled.get("intent", "unknown"),
         "final_answer": assembled.get("final_answer", ""),
@@ -161,10 +201,11 @@ def _build_chat_payload(final_state: Mapping[str, Any]) -> Dict[str, Any]:
         "caveats": assembled.get("caveats", []),
         "suggested_next_questions": assembled.get("suggested_next_questions", []),
         "writer_notes": assembled.get("writer_notes", []),
-        "processing_warnings": assembled.get("processing_warnings", []),
+        "processing_warnings": processing_warnings,
         "grounding_summary": _safe_grounding(assembled.get("grounding_summary")),
         "resolved_query": assembled.get("resolved_query", ""),
         "fallback_triggered": assembled.get("fallback_triggered", False),
+        "thread_id_used": thread_id_used,
     }
 
 
@@ -184,6 +225,19 @@ async def chat_research_stream(
     Streams LangGraph events.
     Rate limit is checked BEFORE the stream generator starts.
     """
+    thread_warnings: List[str] = []
+    if not request.thread_id_provided:
+        thread_warnings.append("missing_thread_id_from_upstream")
+    if request.thread_id == _DEFAULT_THREAD_ID:
+        thread_warnings.append("default_thread_used")
+    if thread_warnings:
+        logger.warning(
+            "investor_agent.thread_warnings warnings=%s thread_id=%s correlation_id=%s",
+            ",".join(thread_warnings),
+            request.thread_id,
+            get_correlation_id(),
+        )
+
     config = {"configurable": {
         "thread_id": request.thread_id}, "recursion_limit": 50}
     initial_state = {
@@ -232,7 +286,11 @@ async def chat_research_stream(
                 logger.warning(
                     "Empty final_answer before assembler fallback; source branch=graph_end")
 
-            payload = _build_chat_payload(final_state)
+            payload = _build_chat_payload(
+                final_state,
+                thread_id_used=request.thread_id,
+                extra_processing_warnings=thread_warnings,
+            )
             answer = payload.get("final_answer", "")
             for answer_chunk in _chunk_text(answer):
                 yield _sse({"type": "answer_chunk", "content": answer_chunk})
@@ -247,6 +305,7 @@ async def chat_research_stream(
                 "writer_notes": payload.get("writer_notes", []),
                 "processing_warnings": payload.get("processing_warnings", []),
                 "grounding_summary": _safe_grounding(payload.get("grounding_summary")),
+                "thread_id_used": payload.get("thread_id_used", ""),
             })
         except asyncio.TimeoutError:
             logger.error(

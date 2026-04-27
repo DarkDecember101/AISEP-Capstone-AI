@@ -256,6 +256,7 @@ async def run(state: GraphState) -> Dict[str, Any]:
     )
 
     if not supported_claims and not conflicts:
+        upstream_warnings = list(getattr(state, "processing_warnings", []) or [])
         _raw_query_for_fallback = (
             getattr(state, "user_query", "") or "").strip()
         _vi_chars = sum(
@@ -283,7 +284,9 @@ async def run(state: GraphState) -> Dict[str, Any]:
             "caveats": [_fallback_caveat],
             "suggested_next_questions": [],
             "writer_notes": ["fallback_insufficient_evidence"],
-            "processing_warnings": ["Zero supported claims extracted."],
+            "processing_warnings": list(dict.fromkeys(
+                upstream_warnings + ["Zero supported claims extracted."]
+            )),
             "grounding_summary": empty_summary.model_dump(),
             "messages": [AIMessage(content=_fallback_msg)]
         }

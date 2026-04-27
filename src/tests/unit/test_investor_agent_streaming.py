@@ -344,8 +344,57 @@ def test_stream_uses_assembler_output(monkeypatch):
     assert "caveats" in metadata
     assert len(metadata["suggested_next_questions"]) == 3
     assert "grounding_summary" in metadata
+    assert metadata["thread_id_used"] == "thread-test"
 
     assert events[-1] == "[DONE]"
+
+
+def test_stream_surfaces_missing_thread_id_warning(monkeypatch):
+    final_state = {
+        "intent": "news",
+        "resolved_query": "startup funding in SEA",
+        "final_answer": "Evidence remains thin but a few signals are visible.",
+        "verified_claims": [],
+        "conflicting_claims": [],
+        "references": [],
+        "caveats": ["Insufficient evidence found during research."],
+        "processing_warnings": [],
+        "grounding_summary": {
+            "verified_claim_count": 0,
+            "weakly_supported_claim_count": 0,
+            "conflicting_claim_count": 0,
+            "unsupported_claim_count": 1,
+            "reference_count": 0,
+            "coverage_status": "insufficient",
+        },
+    }
+
+    monkeypatch.setattr(
+        investor_router_module,
+        "_chat_graph",
+        StubGraph(final_state),
+    )
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/api/v1/investor-agent/chat/stream",
+        json={"query": "Any update?"},
+        headers=AUTH_HEADERS,
+    ) as stream_response:
+        assert stream_response.status_code == 200
+        stream_text = "".join(list(stream_response.iter_text()))
+
+    events = _collect_sse_events(stream_text)
+    metadata_events = [
+        e for e in events if isinstance(e, dict) and e.get("type") == "final_metadata"
+    ]
+
+    assert metadata_events
+    metadata = metadata_events[-1]
+    assert "missing_thread_id_from_upstream" in metadata["processing_warnings"]
+    assert "default_thread_used" in metadata["processing_warnings"]
+    assert metadata["thread_id_used"] == "default_thread"
 
 
 def test_stream_recovers_from_empty_graph_end_output(monkeypatch):
@@ -457,3 +506,20 @@ def test_out_of_scope_stream_short_circuits_and_emits_scope_guard(monkeypatch):
     assert final_answers[-1]["content"].strip() != ""
     assert metadata_events[-1]["references"] == []
     assert metadata_events[-1]["grounding_summary"]["coverage_status"] == "insufficient"
+
+
+def test_stream_rejects_missing_thread_id_when_flag_enabled(monkeypatch):
+    monkeypatch.setattr(
+        investor_router_module.settings,
+        "INVESTOR_AGENT_REQUIRE_THREAD_ID",
+        True,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/investor-agent/chat/stream",
+        json={"query": "Any update?"},
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 422

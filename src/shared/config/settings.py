@@ -141,6 +141,10 @@ class Settings(BaseSettings):
         os.getenv("EVALUATION_PITCH_DECK_MAX_IMAGES", "8"))
 
 
+    INVESTOR_AGENT_REQUIRE_THREAD_ID: bool = os.getenv(
+        "INVESTOR_AGENT_REQUIRE_THREAD_ID", "false").lower() == "true"
+
+
 settings = Settings()
 
 # Ensure directories exist

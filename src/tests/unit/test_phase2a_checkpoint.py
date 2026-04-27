@@ -62,6 +62,10 @@ class TestCheckpointSettings:
         s = Settings()
         assert s.CHECKPOINT_TTL_MINUTES == 1440
 
+    def test_default_require_thread_id_is_false(self):
+        s = Settings()
+        assert s.INVESTOR_AGENT_REQUIRE_THREAD_ID is False
+
 
 # ────────────────────────────────────────────────────────────────────
 # 1. checkpoint.py – factory / singleton
@@ -327,6 +331,22 @@ class TestChatRequestValidation:
     def test_default_thread_id(self):
         req = ChatRequest(query="hello")
         assert req.thread_id == "default_thread"
+
+    def test_requires_thread_id_when_flag_enabled(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.modules.investor_agent.api.router.settings.INVESTOR_AGENT_REQUIRE_THREAD_ID",
+            True,
+        )
+        with pytest.raises(Exception):
+            ChatRequest(query="hello")
+
+    def test_rejects_reserved_default_thread_when_flag_enabled(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.modules.investor_agent.api.router.settings.INVESTOR_AGENT_REQUIRE_THREAD_ID",
+            True,
+        )
+        with pytest.raises(Exception):
+            ChatRequest(query="hello", thread_id="default_thread")
 
     def test_rejects_invalid_thread_id(self):
         with pytest.raises(Exception):

@@ -16,6 +16,7 @@ from src.modules.investor_agent.infrastructure.graph.nodes import (
     claim_verifier_node,
     extract_node,
     fact_builder_node,
+    search_node,
     source_selection_node,
     writer_node,
 )
@@ -53,6 +54,51 @@ def test_source_selection_keeps_usable_sources_when_llm_fails(monkeypatch):
 
     result = asyncio.run(source_selection_node.run(state))
     assert len(result["selected_sources"]) > 0
+
+
+def test_search_node_retries_simplified_query_when_initial_batch_fails(monkeypatch):
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            self.api_key = api_key
+            self.calls = []
+
+        async def search(self, query, search_depth, max_results):
+            self.calls.append(query)
+            if query in {"query a", "query b", "query c"}:
+                raise RuntimeError("temporary upstream failure")
+            return {
+                "results": [
+                    {
+                        "url": "https://www.reuters.com/markets/vietnam-fintech",
+                        "title": "Vietnam fintech outlook",
+                        "content": "Reuters reports on Vietnam fintech momentum.",
+                        "published_date": "2026-04-27",
+                        "score": 0.93,
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(search_node.settings, "TAVILY_API_KEY", "fake")
+    monkeypatch.setattr(search_node, "AsyncTavilyClient", FakeTavilyClient)
+
+    state = GraphState(
+        user_query="Vietnam fintech outlook",
+        resolved_query="Vietnam fintech outlook",
+        sub_queries=["query a", "query b", "query c"],
+        required_coverage=RequiredCoverage(
+            min_sources=2, required_facets=[]).model_dump(),
+    )
+
+    result = asyncio.run(search_node.run(state))
+
+    assert len(result["search_results"]) == 1
+    assert result["search_results"][0]["url"] == "https://www.reuters.com/markets/vietnam-fintech"
+    assert "search_partial_failures=3" in result["processing_warnings"]
+    assert "search_recovered_via_single_query_retry" in result["processing_warnings"]
+    assert any(
+        warning.startswith("search_failure_samples=")
+        for warning in result["processing_warnings"]
+    )
 
 
 def test_extract_parsing_returns_non_empty_documents(monkeypatch):
@@ -116,6 +162,79 @@ def test_fact_builder_fallback_creates_facts_and_claims(monkeypatch):
     result = asyncio.run(fact_builder_node.run(state))
     assert len(result["facts"]) > 0
     assert len(result["claims_candidate"]) > 0
+
+
+def test_fact_builder_repairs_invalid_claim_fact_mapping(monkeypatch):
+    async def fake_generate_structured_async(self, prompt, response_schema, model_name=None, timeout=None, image_paths=None):
+        return fact_builder_node.FactExtractionResult(
+            items=[
+                FactItem(
+                    fact_id="fact_1",
+                    statement="Vietnam AI startups raised capital in 2025.",
+                    entity="Vietnam AI startups",
+                    topic="news",
+                    source_url="https://www.reuters.com/example-news",
+                    source_title="Reuters funding article",
+                    support_strength="strong",
+                )
+            ],
+            candidate_claims=[
+                ClaimCandidate(
+                    claim_id="claim_1",
+                    claim_text="Vietnam AI startups raised capital in 2025.",
+                    topic="news",
+                    supporting_fact_ids=["missing_fact"],
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        fact_builder_node.GeminiClient,
+        "generate_structured_async",
+        fake_generate_structured_async,
+    )
+
+    state = GraphState(
+        user_query="AI startup funding trend in Vietnam",
+        intent="news",
+        extracted_documents=[
+            ExtractedDocument(
+                url="https://www.reuters.com/example-news",
+                title="Reuters funding article",
+                source_domain="www.reuters.com",
+                content="Vietnam AI startups raised capital in 2025.",
+                extract_status="success",
+            ).model_dump()
+        ],
+    )
+
+    result = asyncio.run(fact_builder_node.run(state))
+
+    assert len(result["facts"]) == 1
+    assert len(result["claims_candidate"]) == 1
+    assert result["claims_candidate"][0]["supporting_fact_ids"] == ["fact_1"]
+    assert "fact_builder_invalid_claim_fact_mapping" in result["processing_warnings"]
+    assert "fact_builder_repaired_claim_fact_mapping" in result["processing_warnings"]
+
+
+def test_writer_fallback_preserves_upstream_processing_warnings():
+    state = GraphState(
+        user_query="Gia vang hom nay",
+        intent="news",
+        processing_warnings=[
+            "search_returned_no_results",
+            "fact_builder_used_fallback",
+            "claim_verifier_no_verified_claims",
+        ],
+    )
+
+    result = asyncio.run(writer_node.run(state))
+
+    assert result["final_answer"].strip() != ""
+    assert "Zero supported claims extracted." in result["processing_warnings"]
+    assert "search_returned_no_results" in result["processing_warnings"]
+    assert "fact_builder_used_fallback" in result["processing_warnings"]
+    assert "claim_verifier_no_verified_claims" in result["processing_warnings"]
 
 
 def test_claim_verifier_promotes_supported_claims():

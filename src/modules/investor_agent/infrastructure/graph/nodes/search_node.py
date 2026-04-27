@@ -8,6 +8,19 @@ from tavily import AsyncTavilyClient
 logger = logging.getLogger(__name__)
 
 
+async def _run_search_query(
+    tavily_client: AsyncTavilyClient,
+    query: str,
+    search_depth: str,
+    max_results: int,
+):
+    return await tavily_client.search(
+        query=query,
+        search_depth=search_depth,
+        max_results=max_results,
+    )
+
+
 async def run(state: GraphState) -> Dict[str, Any]:
     queries = state.refined_sub_queries if state.refined_sub_queries else state.sub_queries
     if not queries:
@@ -93,8 +106,15 @@ async def run(state: GraphState) -> Dict[str, Any]:
         tavily_client = AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
         # "basic" (fast) or "advanced" (thorough)
         _search_depth = settings.INVESTOR_AGENT_SEARCH_DEPTH
-        tasks = [tavily_client.search(query=q, search_depth=_search_depth, max_results=max_results_per_query, include_domains=[
-        ], exclude_domains=[]) for q in queries]
+        tasks = [
+            _run_search_query(
+                tavily_client=tavily_client,
+                query=q,
+                search_depth=_search_depth,
+                max_results=max_results_per_query,
+            )
+            for q in queries
+        ]
 
         logger.info("Search node: query_count=%s queries=%s",
                     len(queries), queries)
@@ -102,10 +122,15 @@ async def run(state: GraphState) -> Dict[str, Any]:
 
         raw_results_count = 0
         failures = 0
+        failure_samples: List[str] = []
 
         for q, resp in zip(queries, responses):
             if isinstance(resp, Exception):
                 failures += 1
+                if len(failure_samples) < 2:
+                    failure_samples.append(
+                        f"{type(resp).__name__}: {str(resp).strip()[:140]}"
+                    )
                 logger.warning(
                     "Search query failed: query=%s error=%s", q, resp)
                 continue
@@ -132,6 +157,55 @@ async def run(state: GraphState) -> Dict[str, Any]:
 
         if failures:
             warnings.append(f"search_partial_failures={failures}")
+            if failure_samples:
+                warnings.append(
+                    "search_failure_samples=" + " | ".join(failure_samples)
+                )
+
+        fallback_query = (state.resolved_query or state.user_query or "").strip()
+        if not results and failures == len(queries) and fallback_query:
+            logger.warning(
+                "Search node: all initial queries failed, retrying simplified fallback query=%s",
+                fallback_query,
+            )
+            try:
+                fallback_resp = await _run_search_query(
+                    tavily_client=tavily_client,
+                    query=fallback_query,
+                    search_depth=_search_depth,
+                    max_results=max_results_per_query,
+                )
+                fallback_added = 0
+                for item in fallback_resp.get("results", []) if isinstance(fallback_resp, dict) else []:
+                    url = item.get("url", "")
+                    title = item.get("title", "")
+                    snippet = item.get("content", "")
+                    published_date = item.get(
+                        "published_date") or item.get("published")
+                    if url and not any(r.get("url") == url for r in results):
+                        result_obj = SearchResult(
+                            query=fallback_query,
+                            title=title,
+                            url=url,
+                            snippet=snippet,
+                            published_date=published_date,
+                            score=item.get("score", 0.0),
+                            source_domain=url.split("/")[2] if "//" in url else ""
+                        )
+                        results.append(result_obj.model_dump())
+                        fallback_added += 1
+                if fallback_added:
+                    warnings.append("search_recovered_via_single_query_retry")
+            except Exception as fallback_error:
+                warnings.append(
+                    f"search_fallback_retry_failed={type(fallback_error).__name__}"
+                )
+                logger.warning(
+                    "Search fallback retry failed: query=%s error=%s",
+                    fallback_query,
+                    fallback_error,
+                )
+
         if not results:
             warnings.append("search_returned_no_results")
 
