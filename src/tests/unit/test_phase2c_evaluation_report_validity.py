@@ -904,3 +904,160 @@ def test_process_document_normalizes_single_source_evidence_ids(monkeypatch, tmp
         canonical = metadata["canonical_evaluation"]
         assert canonical["classification"]["stage"]["supporting_evidence_locations"][0]["source_id"] == "doc-public-id"
         assert canonical["criteria_results"][0]["evidence_locations"][0]["source_id"] == "doc-public-id"
+
+
+def test_process_document_does_not_call_excerpt_localization(monkeypatch, tmp_path):
+    from src.modules.evaluation.application.use_cases.process_document import process_document
+
+    engine = _mk_engine()
+    pdf_path = tmp_path / "no-localize.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 test")
+
+    with Session(engine) as session:
+        run = EvaluationRun(startup_id="startup-no-localize", status="processing")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        doc = EvaluationDocument(
+            evaluation_run_id=run.id,
+            document_id="doc-no-localize",
+            document_type="pitch_deck",
+            processing_status="queued",
+            extraction_status="pending",
+            source_file_url_or_path=str(pdf_path),
+        )
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+        doc_id = doc.id
+
+    def _fake_get_session():
+        with Session(engine) as s:
+            yield s
+
+    class _ClsItem:
+        def __init__(self, value: str):
+            self.value = value
+            self.confidence = "Medium"
+            self.resolution_source = "inferred"
+            self.supporting_evidence_locations = []
+
+    class _FakeClassification:
+        stage = _ClsItem("Seed")
+        main_industry = _ClsItem("AI")
+        subindustry = _ClsItem("SaaS")
+        operational_notes = []
+
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+        def model_copy(self, update=None):
+            return self
+
+    class _FakeEvidenceCriterion:
+        gaps = []
+
+    class _FakeEvidence:
+        criteria_evidence = [_FakeEvidenceCriterion()]
+
+        def model_dump_json(self, indent=2):
+            return "{}"
+
+    class _FakeRaw:
+        pass
+
+    class _FakeNarrative:
+        overall_explanation = "ok"
+        top_strengths = ["s"]
+        top_concerns = ["c"]
+
+    class _FakeReport:
+        overall_result_narrative = _FakeNarrative()
+        recommendations = []
+        key_questions = []
+        operational_notes = []
+        top_risks = []
+
+    class _FakePipeline:
+        def __init__(self, pack_name: str):
+            self.pack_name = pack_name
+
+        def classify_startup(self, full_text, images, classification_context=None):
+            return _FakeClassification()
+
+        def map_evidence(self, full_text, images):
+            return _FakeEvidence()
+
+        def judge_raw_criteria(self, evidence_result_json, full_text, images):
+            return _FakeRaw()
+
+        def write_report(self, scoring_result_json, document_type="pitch_deck", classification_json="{}"):
+            return _FakeReport()
+
+        def localize_evidence_excerpts(self, excerpts):
+            raise AssertionError("Step 2b localization should not be called")
+
+    class _FakeScorer:
+        def __init__(self, total_pages=1):
+            self.total_pages = total_pages
+
+        def score(self, classification, evidence, raw_judgments):
+            return DeterministicScoringResult(
+                effective_weights={"Problem_&_Customer_Pain": 1.0},
+                criteria_results=[
+                    CanonicalCriterionResult(
+                        criterion="Problem_&_Customer_Pain",
+                        status="scored",
+                        raw_score=70.0,
+                        final_score=70.0,
+                        weighted_contribution=70.0,
+                        confidence="Medium",
+                        cap_summary=CapSummary(
+                            core_cap=10.0,
+                            stage_cap=10.0,
+                            evidence_quality_cap=10.0,
+                            contradiction_cap=10.0,
+                            contradiction_penalty_points=0.0,
+                        ),
+                        evidence_strength_summary="DIRECT",
+                        evidence_locations=[],
+                        supporting_pages_count=1,
+                        strengths=["x"],
+                        concerns=[],
+                        explanation="ok",
+                    )
+                ],
+                overall_result=CanonicalOverallResult(
+                    overall_score=70.0,
+                    overall_confidence="Medium",
+                    evidence_coverage="moderate",
+                    interpretation_band="strong",
+                    stage_context_note="Seed",
+                ),
+                processing_warnings=[],
+            )
+
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.get_session",
+        _fake_get_session,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.PipelineLLMServices",
+        _FakePipeline,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.DeterministicScoringService",
+        _FakeScorer,
+    )
+    monkeypatch.setattr(
+        "src.modules.evaluation.application.use_cases.process_document.PDFParser.extract_text_and_images",
+        lambda local_file_path, extract_images=True, **kwargs: [
+            {"text": "hello", "image_path": None}],
+    )
+
+    process_document(doc_id)
+
+    with Session(engine) as verify:
+        refreshed_doc = verify.get(EvaluationDocument, doc_id)
+        assert refreshed_doc.processing_status == "completed"

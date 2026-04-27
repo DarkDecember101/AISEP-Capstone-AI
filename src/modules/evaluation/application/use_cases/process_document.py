@@ -20,9 +20,6 @@ from src.modules.evaluation.application.services.report_validity import (
 from src.modules.evaluation.application.services.processing_warning_sanitizer import (
     sanitize_processing_warnings,
 )
-from src.modules.evaluation.application.services.evidence_excerpt_localizer import (
-    localize_excerpts_in_results,
-)
 
 # New Pipeline Imports
 from src.modules.evaluation.application.services.pipeline_llm_services import PipelineLLMServices
@@ -271,28 +268,6 @@ def process_document(document_id: int):
                     )
 
         localization_warnings: list[str] = []
-        localization_started_at = time.perf_counter()
-        try:
-            classification_res, evidence_res, localized_count = localize_excerpts_in_results(
-                classification_res=classification_res,
-                evidence_res=evidence_res,
-                translate_batch=pipeline_services.localize_evidence_excerpts,
-            )
-            if localized_count > 0:
-                localization_warnings.append(
-                    f"EVIDENCE_EXCERPTS_LOCALIZED: Localized {localized_count} excerpt value(s) to Vietnamese."
-                )
-        except Exception as exc:
-            logger.warning("Evidence excerpt localization skipped: %s", exc)
-            localization_warnings.append(
-                f"EVIDENCE_EXCERPT_LOCALIZATION_SKIPPED: {str(exc)}"
-            )
-        else:
-            logger.info(
-                "Step 2b completed for document %s in %.2fs",
-                doc.id,
-                time.perf_counter() - localization_started_at,
-            )
         evidence_json = evidence_res.model_dump_json(indent=2)
 
         logger.info(f"Step 3: Raw Judgments")
