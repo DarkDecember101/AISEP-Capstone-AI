@@ -132,6 +132,14 @@ class Settings(BaseSettings):
     DOCUMENT_DOWNLOAD_EXTRA_HEADERS: str = os.getenv(
         "DOCUMENT_DOWNLOAD_EXTRA_HEADERS", "{}")
 
+    # Evaluation performance
+    EVALUATION_PARALLEL_CLASSIFY_EVIDENCE: bool = os.getenv(
+        "EVALUATION_PARALLEL_CLASSIFY_EVIDENCE", "true").lower() == "true"
+    EVALUATION_PITCH_DECK_IMAGE_TEXT_THRESHOLD: int = int(
+        os.getenv("EVALUATION_PITCH_DECK_IMAGE_TEXT_THRESHOLD", "160"))
+    EVALUATION_PITCH_DECK_MAX_IMAGES: int = int(
+        os.getenv("EVALUATION_PITCH_DECK_MAX_IMAGES", "8"))
+
 
 settings = Settings()
 

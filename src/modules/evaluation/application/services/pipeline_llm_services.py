@@ -66,8 +66,10 @@ class PipelineLLMServices:
         logger.info("[Step 3] Running Raw Criterion Judgment...")
         prompt_tmpl = self.prompt_loader.load_prompt(
             self.pack_name, "raw_criterion")
-        # Inject the evidence mapping result as context
-        context = f"=== EVIDENCE MAP ===\n{evidence_result_json}\n\n=== SOURCE CONTENT ===\n{full_text}"
+        context_parts = [f"=== EVIDENCE MAP ===\n{evidence_result_json}"]
+        if full_text.strip():
+            context_parts.append(f"=== SOURCE CONTENT ===\n{full_text}")
+        context = "\n\n".join(context_parts)
         prompt = prompt_tmpl.replace("{content}", context)
         return self.llm.generate_structured(prompt, RawCriterionJudgmentResult, image_paths=images)
 

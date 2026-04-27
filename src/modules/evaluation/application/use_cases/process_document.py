@@ -1,5 +1,7 @@
 import json
 import os
+import asyncio
+import time
 import uuid
 import httpx
 from typing import Optional, List, Dict, Any
@@ -100,6 +102,7 @@ def process_document(document_id: int):
 
     transient_error: Exception | None = None
     try:
+        started_at = time.perf_counter()
         local_file_path = resolve_document_source_to_local_path(
             doc.source_file_url_or_path)
         if not os.path.exists(local_file_path):
@@ -107,12 +110,30 @@ def process_document(document_id: int):
                 f"Document not found at path: {local_file_path}")
 
         logger.info(f"Extracting Multi-Modal pages for Document {doc.id}")
+        should_extract_images = doc.document_type == "pitch_deck"
+        parse_started_at = time.perf_counter()
         pages = PDFParser.extract_text_and_images(
-            local_file_path, extract_images=True)
+            local_file_path,
+            extract_images=should_extract_images,
+            image_only_for_low_text=should_extract_images,
+            low_text_char_threshold=settings.EVALUATION_PITCH_DECK_IMAGE_TEXT_THRESHOLD,
+            max_images=settings.EVALUATION_PITCH_DECK_MAX_IMAGES if should_extract_images else None,
+        )
+        parse_elapsed = time.perf_counter() - parse_started_at
         total_pages = len(pages)
         all_images = [p.get("image_path")
                       for p in pages if p.get("image_path")]
         full_text = "\n\n".join([p.get("text", "") for p in pages])
+        full_text_word_count = len(full_text.split())
+
+        logger.info(
+            "Document %s extracted: pages=%s words=%s images=%s parse_seconds=%.2f",
+            doc.id,
+            total_pages,
+            full_text_word_count,
+            len(all_images),
+            parse_elapsed,
+        )
 
         if not all_images and not full_text.strip():
             raise ValueError(
@@ -126,6 +147,12 @@ def process_document(document_id: int):
         if pack_name == "business_plan":
             full_text, bp_reduction_metadata = reduce_business_plan_text(
                 pages, reduction_warnings)
+            if bp_reduction_metadata:
+                logger.info(
+                    "Business plan reduction metadata for document %s: %s",
+                    doc.id,
+                    bp_reduction_metadata,
+                )
 
         pipeline_services = PipelineLLMServices(pack_name=pack_name)
         scorer = DeterministicScoringService(total_pages=total_pages)
@@ -144,10 +171,39 @@ def process_document(document_id: int):
                     provided_subindustry=_psi,
                 )
 
-        logger.info(f"Step 1: Classify Startup Context")
-        classification_res = pipeline_services.classify_startup(
-            full_text=full_text, images=all_images,
-            classification_context=classification_context)
+        logger.info("Step 1+2: Classify Startup Context and Map Evidence")
+        step_1_2_started_at = time.perf_counter()
+        if settings.EVALUATION_PARALLEL_CLASSIFY_EVIDENCE:
+            async def _run_parallel_steps():
+                classify_task = asyncio.to_thread(
+                    pipeline_services.classify_startup,
+                    full_text,
+                    all_images,
+                    classification_context,
+                )
+                evidence_task = asyncio.to_thread(
+                    pipeline_services.map_evidence,
+                    full_text,
+                    all_images,
+                )
+                return await asyncio.gather(classify_task, evidence_task)
+
+            classification_res, evidence_res = asyncio.run(_run_parallel_steps())
+        else:
+            classification_res = pipeline_services.classify_startup(
+                full_text=full_text,
+                images=all_images,
+                classification_context=classification_context,
+            )
+            evidence_res = pipeline_services.map_evidence(
+                full_text=full_text,
+                images=all_images,
+            )
+        logger.info(
+            "Step 1+2 completed for document %s in %.2fs",
+            doc.id,
+            time.perf_counter() - step_1_2_started_at,
+        )
 
         # ── Bug 1+2 fix: enforce provided_stage on the classification result. ──
         # The LLM is instructed to verify the hint against evidence and may return
@@ -214,10 +270,8 @@ def process_document(document_id: int):
                            "operational_notes", [])) - len(_clean_op_notes)),
                     )
 
-        logger.info(f"Step 2: Evidence Mapping")
-        evidence_res = pipeline_services.map_evidence(
-            full_text=full_text, images=all_images)
         localization_warnings: list[str] = []
+        localization_started_at = time.perf_counter()
         try:
             classification_res, evidence_res, localized_count = localize_excerpts_in_results(
                 classification_res=classification_res,
@@ -233,22 +287,50 @@ def process_document(document_id: int):
             localization_warnings.append(
                 f"EVIDENCE_EXCERPT_LOCALIZATION_SKIPPED: {str(exc)}"
             )
+        else:
+            logger.info(
+                "Step 2b completed for document %s in %.2fs",
+                doc.id,
+                time.perf_counter() - localization_started_at,
+            )
         evidence_json = evidence_res.model_dump_json(indent=2)
 
         logger.info(f"Step 3: Raw Judgments")
+        raw_started_at = time.perf_counter()
+        raw_full_text = "" if doc.document_type == "pitch_deck" else full_text
         raw_res = pipeline_services.judge_raw_criteria(
-            evidence_result_json=evidence_json, full_text=full_text, images=all_images)
+            evidence_result_json=evidence_json,
+            full_text=raw_full_text,
+            images=None,
+        )
+        logger.info(
+            "Step 3 completed for document %s in %.2fs",
+            doc.id,
+            time.perf_counter() - raw_started_at,
+        )
 
         logger.info(f"Step 4: Deterministic Scoring (Python)")
+        scoring_started_at = time.perf_counter()
         scoring_res = scorer.score(classification_res, evidence_res, raw_res)
+        logger.info(
+            "Step 4 completed for document %s in %.2fs",
+            doc.id,
+            time.perf_counter() - scoring_started_at,
+        )
 
         logger.info(f"Step 5: Report Writer")
+        report_started_at = time.perf_counter()
         scoring_json = scoring_res.model_dump_json(indent=2)
         classification_json = classification_res.model_dump_json(indent=2)
         report_res = pipeline_services.write_report(
             scoring_result_json=scoring_json,
             document_type=doc.document_type or pack_name,
             classification_json=classification_json,
+        )
+        logger.info(
+            "Step 5 completed for document %s in %.2fs",
+            doc.id,
+            time.perf_counter() - report_started_at,
         )
 
         from src.modules.evaluation.application.dto.canonical_schema import (
@@ -475,7 +557,10 @@ def process_document(document_id: int):
 
         doc.processing_status = "completed"
         logger.info(
-            f"Successfully processed Document {doc.id} via Multi-Step Pipeline.")
+            "Successfully processed Document %s via Multi-Step Pipeline in %.2fs.",
+            doc.id,
+            time.perf_counter() - started_at,
+        )
 
     except Exception as e:
         logger.error(f"Failed doc process {doc.id}: {str(e)}", exc_info=True)

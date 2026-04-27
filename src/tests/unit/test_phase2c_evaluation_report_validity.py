@@ -514,7 +514,7 @@ def test_process_document_propagates_startup_id_from_run(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "src.modules.evaluation.application.use_cases.process_document.PDFParser.extract_text_and_images",
-        lambda local_file_path, extract_images=True: [
+        lambda local_file_path, extract_images=True, **kwargs: [
             {"text": "hello", "image_path": None}],
     )
 
@@ -720,7 +720,7 @@ def test_process_document_accepts_financial_improvement_recommendation(monkeypat
     )
     monkeypatch.setattr(
         "src.modules.evaluation.application.use_cases.process_document.PDFParser.extract_text_and_images",
-        lambda local_file_path, extract_images=True: [
+        lambda local_file_path, extract_images=True, **kwargs: [
             {"text": "hello", "image_path": None}],
     )
 
@@ -892,7 +892,7 @@ def test_process_document_normalizes_single_source_evidence_ids(monkeypatch, tmp
     )
     monkeypatch.setattr(
         "src.modules.evaluation.application.use_cases.process_document.PDFParser.extract_text_and_images",
-        lambda local_file_path, extract_images=True: [
+        lambda local_file_path, extract_images=True, **kwargs: [
             {"text": "hello", "image_path": None}],
     )
 

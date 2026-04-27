@@ -107,6 +107,20 @@ class TestPipelineLLMServicesContext:
         prompt = call_args[0][0]
         assert "No classification context was provided" in prompt
 
+    @patch("src.modules.evaluation.application.services.pipeline_llm_services.GeminiClient")
+    def test_7b_judge_raw_criteria_omits_source_content_when_empty(self, MockGemini):
+        from src.modules.evaluation.application.services.pipeline_llm_services import PipelineLLMServices
+
+        mock_llm = MockGemini.return_value
+        mock_llm.generate_structured.return_value = MagicMock()
+
+        svc = PipelineLLMServices(pack_name="pitch_deck")
+        svc.judge_raw_criteria("{}", full_text="", images=None)
+
+        call_args = mock_llm.generate_structured.call_args
+        prompt = call_args[0][0]
+        assert "=== SOURCE CONTENT ===" not in prompt
+
 
 # ── Test 8-10: canonical_schema additions ────────────────────────────
 
