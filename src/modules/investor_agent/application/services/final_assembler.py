@@ -13,7 +13,7 @@ from src.modules.investor_agent.application.services.scope_guard import (
 FALLBACK_NO_EVIDENCE = "I could not find enough reliable evidence to answer this confidently."
 FALLBACK_CONFLICT = "The available sources conflict on key points, so I cannot provide a confident conclusion."
 FALLBACK_GENERIC = "I could not produce a grounded final answer from the available verified evidence."
-_CITATION_PATTERN = re.compile(r"\[(\d+)\]")
+_CITATION_GROUP_PATTERN = re.compile(r"\[(\s*\d+(?:\s*,\s*\d+)*)\]")
 _CONFLICT_PATTERN = re.compile(
     r"\b(conflict|conflicting|contradict|inconsistent|disagree)\b", re.IGNORECASE)
 
@@ -45,6 +45,25 @@ def _normalize_references(references: Any) -> List[Dict[str, str]]:
                 "source_domain": source_domain,
             }
         )
+    return normalized
+
+
+def _normalize_suggested_questions(values: Any, limit: int = 3) -> List[str]:
+    if not isinstance(values, list):
+        return []
+
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        question = " ".join(value.strip().split())
+        if not question or question in seen:
+            continue
+        normalized.append(question)
+        seen.add(question)
+        if len(normalized) >= limit:
+            break
     return normalized
 
 
@@ -126,7 +145,7 @@ def _canonicalize_citations(
     if not final_answer:
         return final_answer, [], processing_warnings
 
-    matches = list(_CITATION_PATTERN.finditer(final_answer))
+    matches = list(_CITATION_GROUP_PATTERN.finditer(final_answer))
     if not matches:
         if references:
             processing_warnings.append(
@@ -137,18 +156,19 @@ def _canonicalize_citations(
     citation_order: List[int] = []
     invalid_indexes: List[int] = []
     for match in matches:
-        idx = int(match.group(1))
-        if 1 <= idx <= max_ref_idx:
-            if idx not in citation_order:
-                citation_order.append(idx)
-        else:
-            invalid_indexes.append(idx)
+        indexes = [int(value) for value in re.findall(r"\d+", match.group(1))]
+        for idx in indexes:
+            if 1 <= idx <= max_ref_idx:
+                if idx not in citation_order:
+                    citation_order.append(idx)
+            else:
+                invalid_indexes.append(idx)
 
     if invalid_indexes:
         processing_warnings.append("invalid_citation_indexes_detected")
 
     if not citation_order:
-        repaired_answer = _CITATION_PATTERN.sub("", final_answer)
+        repaired_answer = _CITATION_GROUP_PATTERN.sub("", final_answer)
         processing_warnings.append("all_citations_invalid_repaired")
         return repaired_answer.strip(), [], processing_warnings
 
@@ -156,15 +176,37 @@ def _canonicalize_citations(
                   old_idx in enumerate(citation_order, start=1)}
 
     def _replace(match: re.Match[str]) -> str:
-        old_idx = int(match.group(1))
-        new_idx = old_to_new.get(old_idx)
-        if new_idx is None:
+        group_indexes = [int(value) for value in re.findall(r"\d+", match.group(1))]
+        rewritten_indexes: List[int] = []
+        for old_idx in group_indexes:
+            new_idx = old_to_new.get(old_idx)
+            if new_idx is None:
+                continue
+            if new_idx not in rewritten_indexes:
+                rewritten_indexes.append(new_idx)
+        if not rewritten_indexes:
             return ""
-        return f"[{new_idx}]"
+        return "[" + ", ".join(str(idx) for idx in rewritten_indexes) + "]"
 
-    rewritten_answer = _CITATION_PATTERN.sub(_replace, final_answer)
+    rewritten_answer = _CITATION_GROUP_PATTERN.sub(_replace, final_answer)
     assembled_refs = [references[idx - 1] for idx in citation_order]
     return rewritten_answer.strip(), assembled_refs, processing_warnings
+
+
+def _sync_reference_consistency(
+    caveats: List[str],
+    grounding_summary: Dict[str, Any],
+    processing_warnings: List[str],
+) -> tuple[List[str], Dict[str, Any], List[str]]:
+    reference_count = int(grounding_summary.get("reference_count", 0) or 0)
+    coverage_status = grounding_summary.get("coverage_status")
+    if reference_count == 0 and coverage_status == "sufficient":
+        grounding_summary["coverage_status"] = "insufficient"
+        processing_warnings.append("coverage_downgraded_missing_references")
+        caveat = "Research output could not retain valid references for the final answer."
+        if caveat not in caveats:
+            caveats.append(caveat)
+    return caveats, grounding_summary, processing_warnings
 
 
 def _sync_conflict_consistency(
@@ -203,6 +245,8 @@ def assemble_final_response(state: Mapping[str, Any]) -> Dict[str, Any]:
 
     references = _normalize_references(state.get("references"))
     caveats = list(state.get("caveats") or [])
+    suggested_next_questions = _normalize_suggested_questions(
+        state.get("suggested_next_questions"))
     writer_notes = list(state.get("writer_notes") or [])
     processing_warnings = list(state.get("processing_warnings") or [])
 
@@ -258,6 +302,11 @@ def assemble_final_response(state: Mapping[str, Any]) -> Dict[str, Any]:
         grounding_summary=grounding_summary_dict,
         processing_warnings=processing_warnings,
     )
+    caveats, grounding_summary_dict, processing_warnings = _sync_reference_consistency(
+        caveats=caveats,
+        grounding_summary=grounding_summary_dict,
+        processing_warnings=processing_warnings,
+    )
 
     processing_warnings = list(dict.fromkeys(processing_warnings))
 
@@ -267,6 +316,7 @@ def assemble_final_response(state: Mapping[str, Any]) -> Dict[str, Any]:
         "final_answer": final_answer,
         "references": references,
         "caveats": caveats,
+        "suggested_next_questions": suggested_next_questions,
         "writer_notes": writer_notes,
         "processing_warnings": processing_warnings,
         "grounding_summary": grounding_summary_dict,

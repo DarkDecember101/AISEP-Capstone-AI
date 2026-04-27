@@ -162,6 +162,7 @@ class GraphState(BaseModel):
     final_answer: str = ""
     references: List[Dict[str, Any]] = Field(default_factory=list)
     caveats: List[str] = Field(default_factory=list)
+    suggested_next_questions: List[str] = Field(default_factory=list)
     writer_notes: List[str] = Field(default_factory=list)
     processing_warnings: List[str] = Field(default_factory=list)
     grounding_summary: Optional[Dict[str, Any]] = None

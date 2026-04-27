@@ -9,6 +9,10 @@ from src.modules.investor_agent.application.services.final_assembler import (
     FALLBACK_NO_EVIDENCE,
     assemble_final_response,
 )
+from src.shared.config.settings import settings
+
+
+AUTH_HEADERS = {"X-Internal-Token": settings.AISEP_INTERNAL_TOKEN}
 
 
 class StubGraph:
@@ -191,6 +195,38 @@ def test_final_assembler_keeps_only_used_reference_ids_and_remaps_numbering():
     assert payload["references"][0]["url"] == "https://example.org/used"
 
 
+def test_final_assembler_keeps_grouped_citations_and_references():
+    payload = assemble_final_response(
+        {
+            "intent": "news",
+            "resolved_query": "gold prices in Vietnam",
+            "final_answer": "Nguoi dung co the tham khao cac nguon sau cho gia vang [1, 2, 3].",
+            "verified_claims": [{"claim_id": "1"}],
+            "references": [
+                {
+                    "title": "Source 1",
+                    "url": "https://example.net/source-1",
+                    "source_domain": "example.net",
+                },
+                {
+                    "title": "Source 2",
+                    "url": "https://example.net/source-2",
+                    "source_domain": "example.net",
+                },
+                {
+                    "title": "Source 3",
+                    "url": "https://example.net/source-3",
+                    "source_domain": "example.net",
+                },
+            ],
+        }
+    )
+
+    assert payload["final_answer"].endswith("[1, 2, 3].")
+    assert len(payload["references"]) == 3
+    assert "unused_references_removed_no_citations" not in payload["processing_warnings"]
+
+
 def test_final_assembler_conflict_caveat_syncs_conflicting_count():
     payload = assemble_final_response(
         {
@@ -213,6 +249,27 @@ def test_final_assembler_conflict_caveat_syncs_conflicting_count():
     assert payload["grounding_summary"]["coverage_status"] == "conflicting"
 
 
+def test_final_assembler_downgrades_sufficient_when_references_missing():
+    payload = assemble_final_response(
+        {
+            "intent": "market_trend",
+            "final_answer": "Demand appears resilient.",
+            "references": [],
+            "grounding_summary": {
+                "verified_claim_count": 1,
+                "weakly_supported_claim_count": 0,
+                "conflicting_claim_count": 0,
+                "unsupported_claim_count": 0,
+                "reference_count": 0,
+                "coverage_status": "sufficient",
+            },
+        }
+    )
+
+    assert payload["grounding_summary"]["coverage_status"] == "insufficient"
+    assert "coverage_downgraded_missing_references" in payload["processing_warnings"]
+
+
 def test_final_assembler_returns_fami_greeting_for_salutation_query():
     payload = assemble_final_response(
         {
@@ -227,6 +284,7 @@ def test_final_assembler_returns_fami_greeting_for_salutation_query():
 
     assert payload["final_answer"].startswith("Xin ch\u00e0o, t\u00f4i l\u00e0 Fami")
     assert payload["caveats"] == []
+    assert payload["suggested_next_questions"] == []
     assert "greeting_query" in payload["processing_warnings"]
 
 
@@ -240,6 +298,11 @@ def test_stream_uses_assembler_output(monkeypatch):
         "conflicting_claims": [],
         "references": [],
         "caveats": ["Insufficient evidence found during research."],
+        "suggested_next_questions": [
+            "Nen thu hep pham vi theo quoc gia nao truoc?",
+            "Ban co muon dao sau vao startup stage cu the nao khong?",
+            "Co nen uu tien tin tuc funding hay nhu cau thi truong?"
+        ],
         "processing_warnings": [],
         "grounding_summary": {
             "verified_claim_count": 0,
@@ -259,6 +322,7 @@ def test_stream_uses_assembler_output(monkeypatch):
         "POST",
         "/api/v1/investor-agent/chat/stream",
         json={"query": "Any update?", "thread_id": "thread-test"},
+        headers=AUTH_HEADERS,
     ) as stream_response:
         assert stream_response.status_code == 200
         stream_text = "".join(list(stream_response.iter_text()))
@@ -278,6 +342,7 @@ def test_stream_uses_assembler_output(monkeypatch):
     assert "writer_returned_empty_answer" in metadata["processing_warnings"]
     assert "references" in metadata
     assert "caveats" in metadata
+    assert len(metadata["suggested_next_questions"]) == 3
     assert "grounding_summary" in metadata
 
     assert events[-1] == "[DONE]"
@@ -298,6 +363,11 @@ def test_stream_recovers_from_empty_graph_end_output(monkeypatch):
             }
         ],
         "caveats": [],
+        "suggested_next_questions": [
+            "Which buyer segments are driving that enterprise AI spend?",
+            "What risks could slow the outlook over the next 12 months?",
+            "Which competitors are best positioned to capture that demand?"
+        ],
         "processing_warnings": [],
         "grounding_summary": {
             "verified_claim_count": 1,
@@ -320,6 +390,7 @@ def test_stream_recovers_from_empty_graph_end_output(monkeypatch):
         "POST",
         "/api/v1/investor-agent/chat/stream",
         json={"query": "Outlook?", "thread_id": "thread-recover"},
+        headers=AUTH_HEADERS,
     ) as stream_response:
         assert stream_response.status_code == 200
         stream_text = "".join(list(stream_response.iter_text()))
@@ -336,6 +407,7 @@ def test_stream_recovers_from_empty_graph_end_output(monkeypatch):
 
     assert metadata_events
     assert metadata_events[-1]["references"]
+    assert len(metadata_events[-1]["suggested_next_questions"]) == 3
     assert metadata_events[-1]["grounding_summary"]["verified_claim_count"] == 1
 
 
@@ -367,6 +439,7 @@ def test_out_of_scope_stream_short_circuits_and_emits_scope_guard(monkeypatch):
         "POST",
         "/api/v1/investor-agent/chat/stream",
         json={"query": "How is weather today?", "thread_id": "thread-scope"},
+        headers=AUTH_HEADERS,
     ) as stream_response:
         assert stream_response.status_code == 200
         stream_text = "".join(list(stream_response.iter_text()))

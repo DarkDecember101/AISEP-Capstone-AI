@@ -161,17 +161,28 @@ def test_claim_verifier_promotes_supported_claims():
 
 
 def test_writer_uses_only_grounded_references(monkeypatch):
+    call_count = {"count": 0}
+
     async def fake_generate_structured_async(self, prompt, response_schema, model_name=None, timeout=None, image_paths=None):
-        return writer_node.FinalOutput(
-            final_answer="Enterprise AI demand remains active [1].",
-            references=[
-                ReferenceItem(
-                    title="Made up source",
-                    url="https://fake.example.com/invented",
-                    source_domain="fake.example.com",
-                )
-            ],
-            caveats=[],
+        call_count["count"] += 1
+        if response_schema is writer_node.FinalOutput:
+            return writer_node.FinalOutput(
+                final_answer="Enterprise AI demand remains active [1].",
+                references=[
+                    ReferenceItem(
+                        title="Made up source",
+                        url="https://fake.example.com/invented",
+                        source_domain="fake.example.com",
+                    )
+                ],
+                caveats=[],
+            )
+        return writer_node.SuggestedQuestionsOutput(
+            suggested_next_questions=[
+                "Which sectors are driving enterprise AI demand most strongly?",
+                "What budget risks could slow enterprise AI spending next year?",
+                "Which vendors are best positioned to capture that demand?",
+            ]
         )
 
     monkeypatch.setattr(
@@ -207,6 +218,8 @@ def test_writer_uses_only_grounded_references(monkeypatch):
     assert len(result["references"]) == 1
     assert result["references"][0]["url"] == "https://www.reuters.com/technology/enterprise-ai-demand"
     assert all(ref["url"] != "https://fake.example.com/invented" for ref in result["references"])
+    assert len(result["suggested_next_questions"]) == 3
+    assert call_count["count"] == 2
     assert "writer_used_grounded_reference_fallback" in result["processing_warnings"]
 
 
@@ -214,17 +227,25 @@ def test_writer_conflict_only_prompt_includes_disputed_claims(monkeypatch):
     captured = {}
 
     async def fake_generate_structured_async(self, prompt, response_schema, model_name=None, timeout=None, image_paths=None):
-        captured["prompt"] = prompt
-        return writer_node.FinalOutput(
-            final_answer="The available evidence is disputed [1].",
-            references=[
-                ReferenceItem(
-                    title="Reuters report",
-                    url="https://www.reuters.com/markets/disputed-metric",
-                    source_domain="www.reuters.com",
-                )
-            ],
-            caveats=["Treat the claim cautiously."],
+        if response_schema is writer_node.FinalOutput:
+            captured["prompt"] = prompt
+            return writer_node.FinalOutput(
+                final_answer="The available evidence is disputed [1].",
+                references=[
+                    ReferenceItem(
+                        title="Reuters report",
+                        url="https://www.reuters.com/markets/disputed-metric",
+                        source_domain="www.reuters.com",
+                    )
+                ],
+                caveats=["Treat the claim cautiously."],
+            )
+        return writer_node.SuggestedQuestionsOutput(
+            suggested_next_questions=[
+                "Which sources could help validate the disputed metric further?",
+                "What downside risks emerge if the reported growth rate is overstated?",
+                "Which competing data points should investors compare next?",
+            ]
         )
 
     monkeypatch.setattr(
@@ -260,3 +281,57 @@ def test_writer_conflict_only_prompt_includes_disputed_claims(monkeypatch):
     assert "Reported growth rate reached 30% in 2025." in captured["prompt"]
     assert "[DISPUTED]" in captured["prompt"]
     assert result["final_answer"].strip() != ""
+    assert len(result["suggested_next_questions"]) == 3
+
+
+def test_writer_skips_suggested_questions_when_grounding_is_degraded(monkeypatch):
+    call_count = {"count": 0}
+
+    async def fake_generate_structured_async(self, prompt, response_schema, model_name=None, timeout=None, image_paths=None):
+        call_count["count"] += 1
+        return writer_node.FinalOutput(
+            final_answer="Gold pricing details are not directly confirmed, but several finance sources can be checked [1].",
+            references=[
+                ReferenceItem(
+                    title="Gold source",
+                    url="https://www.reuters.com/markets/gold-source",
+                    source_domain="www.reuters.com",
+                )
+            ],
+            caveats=["Evidence is indirect."],
+        )
+
+    monkeypatch.setattr(
+        writer_node.GeminiClient,
+        "generate_structured_async",
+        fake_generate_structured_async,
+    )
+
+    state = GraphState(
+        user_query="Gia vang hom nay",
+        intent="news",
+        processing_warnings=["fact_builder_used_fallback"],
+        verified_claims=[
+            VerifiedClaim(
+                claim_id="claim_1",
+                claim_text="Several finance sources publish branded gold prices.",
+                status="weakly_supported",
+                supporting_sources=[
+                    SelectedSource(
+                        url="https://www.reuters.com/markets/gold-source",
+                        title="Gold source",
+                        source_domain="www.reuters.com",
+                        selection_reason="trusted",
+                        trust_tier="high",
+                    )
+                ],
+                verification_note="Indirect source coverage only.",
+            ).model_dump()
+        ],
+    )
+
+    result = asyncio.run(writer_node.run(state))
+
+    assert result["suggested_next_questions"] == []
+    assert "suggested_questions_skipped_low_grounding" in result["processing_warnings"]
+    assert call_count["count"] == 1

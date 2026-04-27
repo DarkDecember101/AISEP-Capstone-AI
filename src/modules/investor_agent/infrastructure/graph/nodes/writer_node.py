@@ -16,6 +16,11 @@ from src.shared.providers.llm.gemini_client import GeminiClient
 
 
 logger = logging.getLogger(__name__)
+_SUGGESTION_DEGRADING_WARNINGS = {
+    "fact_builder_llm_exception",
+    "fact_builder_auto_claims_from_facts",
+    "fact_builder_used_fallback",
+}
 
 
 def _relevance_tokens(state: GraphState) -> List[str]:
@@ -62,6 +67,10 @@ class FinalOutput(BaseModel):
     caveats: List[str]
 
 
+class SuggestedQuestionsOutput(BaseModel):
+    suggested_next_questions: List[str] = Field(default_factory=list)
+
+
 def _reference_from_source(source: Any) -> ReferenceItem:
     return ReferenceItem(
         title=getattr(source, "title", "") or "",
@@ -74,6 +83,89 @@ def _format_verified_claim(claim: VerifiedClaim) -> str:
     primary_url = claim.supporting_sources[0].url if claim.supporting_sources else ""
     note = f" Note: {claim.verification_note}" if claim.verification_note else ""
     return f"- [SRC:{primary_url}] {claim.claim_text} ({claim.status}).{note}"
+
+
+def _format_question_seed_claim(claim: VerifiedClaim) -> str:
+    primary_url = claim.supporting_sources[0].url if claim.supporting_sources else ""
+    return f"- Claim: {claim.claim_text} | Status: {claim.status} | Source: {primary_url}"
+
+
+def _normalize_suggested_questions(values: List[str], limit: int = 3) -> List[str]:
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        question = " ".join((value or "").strip().split())
+        if not question or question in seen:
+            continue
+        normalized.append(question)
+        seen.add(question)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+async def _generate_suggested_next_questions(
+    llm: GeminiClient,
+    query: str,
+    answer_text: str,
+    intent: str,
+    caveats: List[str],
+    coverage_status: str,
+    supported_claims: List[VerifiedClaim],
+    references: List[ReferenceItem],
+) -> List[str]:
+    if not query.strip() or not answer_text.strip() or not supported_claims or not references:
+        return []
+
+    caveats_str = "\n".join(f"- {caveat}" for caveat in caveats) or "- None"
+    claim_seeds = "\n".join(_format_question_seed_claim(claim)
+                             for claim in supported_claims[:5])
+    reference_seeds = "\n".join(
+        f"- {reference.title} | {reference.url} | {reference.source_domain}"
+        for reference in references[:5]
+    )
+    prompt = f"""
+You generate follow-up questions for an investor research chat UI.
+
+LANGUAGE RULE:
+- Use the same language as the user's query when it is clearly Vietnamese or English.
+- If unclear, use the same language as the final answer.
+
+Task:
+- Create exactly 3 concise follow-up questions a user could click next.
+- Keep them tightly related to the user's original query and the final answer.
+- Make them useful for deeper investor research, but only when the topic is directly motivated by the grounded evidence below.
+- Base every suggested question on the grounded claims or references below. Do not introduce a new macro topic unless it is already implied by those claims.
+- Prefer follow-up questions that deepen one of these angles: validation of the reported fact, implications for investors, competitor read-through, risk, or next evidence to confirm.
+- Do not repeat the original query.
+- Do not mention citations, source numbers, or "the answer above".
+- Avoid generic filler like "Can you tell me more?".
+- Return only the JSON schema.
+
+Original query: "{query}"
+Intent: {intent}
+Coverage status: {coverage_status}
+
+Final answer:
+{answer_text}
+
+Caveats:
+{caveats_str}
+
+Grounded claims:
+{claim_seeds}
+
+Grounded references:
+{reference_seeds}
+    """
+
+    result = await llm.generate_structured_async(
+        prompt=prompt,
+        response_schema=SuggestedQuestionsOutput,
+        model_name="gemini-2.5-flash",
+        timeout=15.0,
+    )
+    return _normalize_suggested_questions(result.suggested_next_questions)
 
 
 async def run(state: GraphState) -> Dict[str, Any]:
@@ -94,6 +186,7 @@ async def run(state: GraphState) -> Dict[str, Any]:
             "final_answer": refusal,
             "references": [],
             "caveats": [caveat] if caveat else [],
+            "suggested_next_questions": [],
             "writer_notes": ["greeting_response"] if greeting_query else ["scope_guard_refusal"],
             "processing_warnings": list(dict.fromkeys((state.processing_warnings or []) + (["greeting_query"] if greeting_query else ["out_of_scope_query"]))),
             "grounding_summary": summary.model_dump(),
@@ -188,6 +281,7 @@ async def run(state: GraphState) -> Dict[str, Any]:
             "final_answer": _fallback_msg,
             "references": [],
             "caveats": [_fallback_caveat],
+            "suggested_next_questions": [],
             "writer_notes": ["fallback_insufficient_evidence"],
             "processing_warnings": ["Zero supported claims extracted."],
             "grounding_summary": empty_summary.model_dump(),
@@ -302,6 +396,26 @@ Conflicting Information:
         final_caveats.append(
             f"Research coverage: {coverage_assessment.coverage_status}")
 
+    suggested_next_questions: List[str] = []
+    upstream_warnings = set(getattr(state, "processing_warnings", []))
+    if final_refs and not (upstream_warnings & _SUGGESTION_DEGRADING_WARNINGS):
+        try:
+            suggested_next_questions = await _generate_suggested_next_questions(
+                llm=llm,
+                query=query_to_use,
+                answer_text=answer_text,
+                intent=state.intent or "mixed",
+                caveats=final_caveats,
+                coverage_status=coverage_status,
+                supported_claims=supported_claims,
+                references=final_refs,
+            )
+        except Exception as exc:
+            logger.warning("Suggested question generation failed: %s", exc)
+            warnings.append("suggested_questions_generation_failed")
+    elif upstream_warnings & _SUGGESTION_DEGRADING_WARNINGS:
+        warnings.append("suggested_questions_skipped_low_grounding")
+
     v_count = len([c for c in supported_claims if c.status == "supported"])
     w_count = len(
         [c for c in supported_claims if c.status == "weakly_supported"])
@@ -331,6 +445,7 @@ Conflicting Information:
         "final_answer": answer_text,
         "references": [ref.model_dump() for ref in final_refs],
         "caveats": final_caveats,
+        "suggested_next_questions": suggested_next_questions,
         "writer_notes": writer_notes + (["writer_used_previous_context"] if using_previous_context else []),
         "processing_warnings": warnings + getattr(state, "processing_warnings", []),
         "grounding_summary": smry.model_dump(),

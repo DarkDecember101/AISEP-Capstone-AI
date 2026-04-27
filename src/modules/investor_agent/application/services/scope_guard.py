@@ -246,6 +246,7 @@ def build_out_of_scope_payload(query: str = "") -> dict:
         "final_answer": get_refusal(query),
         "references": [],
         "caveats": [caveat] if caveat else [],
+        "suggested_next_questions": [],
         "writer_notes": ["greeting_response"] if greeting_query else ["scope_guard_refusal"],
         "processing_warnings": ["greeting_query"] if greeting_query else ["out_of_scope_query"],
         "grounding_summary": {
