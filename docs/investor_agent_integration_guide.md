@@ -2,28 +2,43 @@
 
 ## 1. Muc tieu
 
-Tai lieu nay huong dan cach de Backend va Frontend su dung day du tinh nang cua `investor_agent` hien co trong code base.
+Tai lieu nay la user guide handoff cho team Backend va Frontend de tich hop chatbot `investor_agent` dung voi contract hien tai trong code base.
 
-Module nay hien dang ho tro:
+Guide nay bao phu:
 
-- Chat research theo luong streaming.
-- Multi-turn memory theo `thread_id`.
-- Tu dong phan biet greeting, follow-up, out-of-scope.
-- Tra ve cau tra loi cuoi cung kem references, caveats, grounding summary.
-- Phat progress event theo tung node de FE hien loading state chi tiet.
+- endpoint stream chinh
+- request/response contract
+- `thread_id` va multi-turn memory
+- auth, timeout, rate limit
+- SSE event ma FE can parse
+- `suggested_next_questions`
+- cac luu y production de tranh mat stream, mat reference, hoac UX sai
 
-## 2. Endpoint hien co
+Nguon code chinh:
 
-API dang expose 1 entry point chinh:
+- Router: [src/modules/investor_agent/api/router.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/api/router.py:1)
+- Final assembler: [src/modules/investor_agent/application/services/final_assembler.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/application/services/final_assembler.py:1)
+- Writer node: [src/modules/investor_agent/infrastructure/graph/nodes/writer_node.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/infrastructure/graph/nodes/writer_node.py:1)
+- Auth dependency: [src/shared/auth.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/shared/auth.py:1)
+- Settings: [src/shared/config/settings.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/shared/config/settings.py:1)
 
-- `POST /api/v1/investor-agent/chat/stream`
+## 2. Tong quan nhanh
 
-Nguon:
+`investor_agent` hien tai hoat dong theo mo hinh:
 
-- API mount tai [src/main.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/main.py:61)
-- Router tai [src/modules/investor_agent/api/router.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/api/router.py:175)
+`Frontend -> Backend cua ban -> AISEP AI /api/v1/investor-agent/chat/stream`
 
-## 3. Request contract
+Ly do nen di qua Backend:
+
+- giu `X-Internal-Token` o server
+- map conversation cua user sang `thread_id`
+- luu transcript va metadata
+- log `correlation_id` khi co loi
+- co the them auth, quota, audit, analytics o he thong cua ban
+
+FE khong nen goi truc tiep production endpoint neu token noi bo dang bat.
+
+## 3. Endpoint
 
 ### URL
 
@@ -36,33 +51,50 @@ POST /api/v1/investor-agent/chat/stream
 - `Content-Type: application/json`
 - `Accept: text/event-stream`
 - `X-Internal-Token: <token>`
-  - chi can khi server bat `REQUIRE_INTERNAL_AUTH=true`
-  - auth rule tai [src/shared/auth.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/shared/auth.py:34)
+
+`X-Internal-Token` chi bat buoc khi `REQUIRE_INTERNAL_AUTH=true` trong env. Rule auth nam o [src/shared/auth.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/shared/auth.py:28).
 
 ### Body
 
 ```json
 {
-  "query": "Xu hướng AI tại Việt Nam 2026",
+  "query": "Xu huong AI tai Viet Nam 2026",
   "thread_id": "investor-chat-001"
 }
 ```
 
-### Rule cho `thread_id`
+### Validation
 
-- Chi duoc dung `a-z`, `A-Z`, `0-9`, `_`, `-`
-- Do dai 1-128 ky tu
-- Validate tai [src/modules/investor_agent/api/router.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/api/router.py:69)
+- `query` khong duoc rong
+- `thread_id` chi cho phep `a-z`, `A-Z`, `0-9`, `_`, `-`
+- do dai `thread_id`: `1-128`
 
-### Y nghia `thread_id`
+Validation nam o [src/modules/investor_agent/api/router.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/api/router.py:53).
 
-- Cung `thread_id` => cung mot hoi thoai, agent se tai su dung memory
-- Doi `thread_id` => hoi thoai moi
-- Nen generate 1 `thread_id` theo `user/session/conversation`
+## 4. `thread_id` va multi-turn memory
 
-## 4. Response transport
+### Y nghia
 
-Endpoint nay khong tra JSON mot lan. No tra **SSE stream** (`text/event-stream`) qua cac frame:
+- cung `thread_id` -> cung mot conversation
+- doi `thread_id` -> conversation moi
+
+Agent tu luu va tai su dung context theo `thread_id`. FE khong can gui lai lich su chat neu da dung dung `thread_id`.
+
+### FE hay BE tao `thread_id`?
+
+Code hien tai chap nhan ca 2 cach. Tuy nhien production nen de BE quan ly hoac xac nhan `thread_id` de:
+
+- tranh user ghi de conversation cua nhau
+- map dung voi record conversation trong he thong cua ban
+- audit va restore hoi thoai de hon
+
+### Neu gui `thread_id` moi hoan toan thi sao?
+
+Agent se tu khoi tao state/checkpoint moi. Khong can tao thread bang API rieng.
+
+## 5. Kieu response
+
+Endpoint nay khong tra mot JSON cuoi cung. No tra SSE stream:
 
 ```text
 data: {...json...}
@@ -72,15 +104,16 @@ data: {...json...}
 data: [DONE]
 ```
 
-Luu y:
+Luu y quan trong:
 
-- Day la `POST` stream, vi vay FE **khong dung `EventSource` mac dinh**
+- day la `POST` stream, khong phai `GET`
+- FE khong nen dung `EventSource`
 - FE nen dung `fetch()` + `ReadableStream`
-- BE neu proxy stream thi nen forward tung dong SSE ve FE
+- BE proxy nen forward tung frame SSE, khong doc het roi moi tra
 
-## 5. Cac event FE can xu ly
+## 6. Cac SSE event chinh
 
-### 5.1 `progress`
+### `progress`
 
 ```json
 { "type": "progress", "node": "search" }
@@ -99,25 +132,38 @@ Node co the gap:
 - `writer`
 - `scope_guard`
 
-`scope_guard` la progress event bo sung khi query bi xep `out_of_scope`.
+`scope_guard` la event bo sung khi query bi xep `out_of_scope`.
 
-### 5.2 `answer_chunk`
+### `answer_chunk`
 
 ```json
 { "type": "answer_chunk", "content": "..." }
 ```
 
-Dung de FE render text dan dan trong bong chat.
+Dung de FE stream text dan vao bubble chat.
 
-### 5.3 `final_answer`
+Quan trong:
+
+- day khong phai chain-of-thought
+- day la final answer da duoc chunk ra
+- chunk dau tien thuong chi xuat hien gan cuoi pipeline, khong phai token stream som
+
+### `final_answer`
 
 ```json
 { "type": "final_answer", "content": "..." }
 ```
 
-Day la cau tra loi day du sau cung.
+Day la ban answer day du sau cung. FE nen coi day la source of truth va co the replace noi dung da ghep tu `answer_chunk`.
 
-### 5.4 `final_metadata`
+### `final_metadata`
+
+Quan trong nhat:
+
+- `final_metadata` hien tai la object phang
+- khong co field `content` bao ngoai
+
+Shape hien tai:
 
 ```json
 {
@@ -131,9 +177,9 @@ Day la cau tra loi day du sau cung.
   ],
   "caveats": ["Research coverage: insufficient"],
   "suggested_next_questions": [
-    "Nhung phan khuc khach hang nao dang thuc su tao nhu cau AI lon nhat tai khu vuc nay?",
-    "Rui ro canh tranh nao nha dau tu nen theo doi trong 12 thang toi?",
-    "Chinh sach hoac quy dinh nao co the tac dong manh den toc do tang truong cua thi truong nay?"
+    "Nhom khach hang nao dang tao nhu cau AI lon nhat?",
+    "Rui ro canh tranh nao nha dau tu can theo doi?",
+    "Can xac minh them tin hieu nao trong 6-12 thang toi?"
   ],
   "writer_notes": ["writer_used_previous_context"],
   "processing_warnings": ["source_selection_heuristic_fast_path"],
@@ -148,7 +194,16 @@ Day la cau tra loi day du sau cung.
 }
 ```
 
-### 5.5 `error`
+Y nghia cac field:
+
+- `references`: danh sach source cuoi cung dung de grounding answer
+- `caveats`: cac luu y ve pham vi, conflict, hoac do day cua evidence
+- `suggested_next_questions`: 0-3 cau hoi goi y tiep theo
+- `writer_notes`: ghi chu noi bo tu writer/fallback
+- `processing_warnings`: canh bao ky thuat/noi bo
+- `grounding_summary`: thong ke muc do grounding
+
+### `error`
 
 ```json
 {
@@ -158,90 +213,104 @@ Day la cau tra loi day du sau cung.
 }
 ```
 
-### 5.6 `[DONE]`
+### `[DONE]`
 
 ```text
 data: [DONE]
 ```
 
-Khi nhan marker nay, FE/BE dong stream va ket thuc request.
+Nhan marker nay thi stream ket thuc.
 
-## 6. Hanh vi nghiep vu quan trong
+## 7. Timeout va HTTP status
+
+Internal timeout cua pipeline dang la `240s` o [src/modules/investor_agent/api/router.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/api/router.py:24).
+
+Neu timeout xay ra ben trong pipeline:
+
+- HTTP status thuong van la `200`
+- server phat SSE `type: "error"`
+- sau do van phat `[DONE]`
+
+Dieu nay rat quan trong cho BE/FE:
+
+- khong duoc chi dua vao HTTP status de ket luan request thanh cong
+- phai parse event `error` trong stream
+
+HTTP `504` chi co the xay ra neu loi nam o lop ngoai:
+
+- reverse proxy
+- API gateway
+- load balancer
+- BE proxy cua ban
+- client timeout som hon AI service
+
+## 8. Hanh vi nghiep vu ma FE can biet
 
 ### Greeting
 
-Neu user nhan:
+Neu user gui nhu:
 
 - `Hi`
 - `Hello`
 - `Xin chao`
-- `Xin chào`
-- hoac greeting ngan tuong tu
+- `Chao ban`
 
-agent se tra ve loi chao Fami ngay, khong chay full research pipeline.
+agent se short-circuit som va tra loi chao Fami. FE nen render no nhu mot answer binh thuong.
 
-FE nen xem day la answer hop le binh thuong, khong can treat nhu error.
+### Out-of-scope
 
-### Out of scope
+Neu query nam ngoai pham vi investor research:
 
-Neu query nam ngoai pham vi investor research, agent se:
+- stream se short-circuit som
+- `references` thuong la `[]`
+- `grounding_summary.coverage_status` thuong la `insufficient`
 
-- short-circuit som
-- tra 1 cau tu choi lich su
-- references = `[]`
-- grounding summary thuong la `insufficient`
-
-### Follow-up / multi-turn
+### Follow-up
 
 Neu user hoi tiep trong cung `thread_id`, agent co the:
 
-- tu dong resolve follow-up
-- reuse mot phan context cu
-- hoac bat fresh search neu doi quoc gia/thi truong/truy van recency
+- reuse context cu
+- resolve cau hoi ngan/phu thuoc ngu canh
+- hoac quyet dinh search lai neu doi entity, doi thi truong, doi recency
 
-Vi vay:
+### `suggested_next_questions`
 
-- FE khong can tu nop lai lich su hoi thoai
-- FE/BE chi can giu dung `thread_id`
+Field nay vua duoc them vao contract.
 
-## 7. Huong dan cho Backend
+Can hieu dung:
 
-## 7.1 Khuyen nghi production
+- day la mang `string[]`
+- co the co toi da `3` phan tu
+- co the la `[]` neu grounding yeu, fallback qua nhieu, hoac agent quyet dinh khong nen sinh goi y
 
-Nen dung pattern:
+FE nen:
 
-```text
-Frontend -> Backend cua ban -> AISEP AI /investor-agent/chat/stream
-```
+- render neu mang co item
+- an khu goi y neu mang rong
+- khong coi `[]` la loi
 
-Ly do:
+## 9. Huong dan cho Backend
 
-- Giu `X-Internal-Token` o BE, khong expose ra FE
-- Co the auth user, audit, quota, log, save transcript tai he thong cua ban
-- Co the map SSE event ve UI contract rieng neu can
+### Flow BE nen dung
 
-## 7.2 Viec BE can lam
+1. Nhan `query` va conversation id tu FE.
+2. Tao hoac map sang `thread_id`.
+3. Goi `POST /api/v1/investor-agent/chat/stream`.
+4. Forward SSE stream ve FE.
+5. Khi nhan `final_answer` va `final_metadata`, co the luu transcript vao DB.
+6. Neu nhan `error`, log `correlation_id`.
 
-1. Nhan `query` va `thread_id` tu FE.
-2. Kiem tra user/session co quyen chat hay khong.
-3. Tao hoac validate `thread_id`.
-4. Goi `POST /api/v1/investor-agent/chat/stream`.
-5. Forward SSE stream nguyen van hoac map lai cho FE.
-6. Khi nhan `final_answer` va `final_metadata`, co the luu transcript vao DB cua BE.
+### Header va timeout
 
-## 7.3 Header va timeout
-
-BE nen set:
+BE nen gui:
 
 - `Content-Type: application/json`
 - `Accept: text/event-stream`
-- `X-Internal-Token` neu auth noi bo dang bat
+- `X-Internal-Token`
 
-Nen dat timeout o BE > 240 giay mot chut neu proxy streaming, vi AI service dang timeout noi bo tai:
+BE proxy nen dat timeout > `240s`, vi AI service dang tu timeout ben trong o `240s`.
 
-- [src/modules/investor_agent/api/router.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/modules/investor_agent/api/router.py:29)
-
-## 7.4 Vi du BE proxy bang .NET
+### .NET proxy sample
 
 ```csharp
 [ApiController]
@@ -275,6 +344,14 @@ public class InvestorAgentProxyController : ControllerBase
             ct
         );
 
+        if (!response.IsSuccessStatusCode)
+        {
+            Response.StatusCode = (int)response.StatusCode;
+            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
+            await response.Content.CopyToAsync(Response.Body);
+            return;
+        }
+
         Response.StatusCode = (int)response.StatusCode;
         Response.ContentType = "text/event-stream; charset=utf-8";
 
@@ -291,15 +368,17 @@ public class InvestorChatRequest
 }
 ```
 
-### Note cho BE
+### Luu y production cho BE
 
-- Dung `HttpCompletionOption.ResponseHeadersRead` de doc stream tung phan
-- Khong doc het stream roi moi tra ve FE
-- Neu upstream tra HTTP error JSON envelope, nen pass-through nguyen body cho FE
+- Dung `HttpCompletionOption.ResponseHeadersRead`
+- Khong buffer toan bo response
+- Khong parse xong roi moi re-serialize neu khong can thiet
+- Khi upstream tra JSON error envelope truoc khi stream bat dau, nen pass-through nguyen body
+- Nhat ky nen log `thread_id`, `correlation_id`, `user_id`, `conversation_id`
 
-## 7.5 HTTP error envelope khi request khong vao duoc stream
+### JSON error envelope truoc khi vao stream
 
-Neu loi xay ra truoc khi stream bat dau, API tra JSON co shape:
+Neu request fail truoc khi stream bat dau, API se tra JSON envelope nhu:
 
 ```json
 {
@@ -310,37 +389,31 @@ Neu loi xay ra truoc khi stream bat dau, API tra JSON co shape:
 }
 ```
 
-Envelope tai:
-
-- [src/shared/error_response.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/shared/error_response.py:43)
-
-Case thuong gap:
+Thuong gap:
 
 - `401 AUTH_FAILED`
 - `422 VALIDATION_ERROR`
-- `429 HTTP_ERROR`
+- `429 RATE_LIMIT_EXCEEDED`
 
-## 8. Huong dan cho Frontend
+## 10. Huong dan cho Frontend
 
-## 8.1 Luong FE nen dung
+### Flow FE nen dung
 
 1. User nhap cau hoi.
-2. FE tao hoac lay `thread_id` cua conversation hien tai.
+2. FE lay `conversationId` hien tai.
 3. FE goi endpoint proxy cua BE.
 4. FE parse SSE line-by-line.
-5. FE:
-   - cap nhat loading step tu `progress`
-   - noi text tu `answer_chunk`
-   - chot message tu `final_answer`
-   - render references/caveats tu `final_metadata`
+5. FE cap nhat UI theo event.
 
-## 8.2 FE khong nen lam
+### FE khong nen lam
 
-- Khong dung `EventSource` cho endpoint nay vi day la `POST`
-- Khong expose `X-Internal-Token` tren browser production
-- Khong reset `thread_id` sau moi message neu muon giu memory
+- khong dung `EventSource` vi day la `POST`
+- khong expose `X-Internal-Token` tren browser production
+- khong reset `thread_id` sau moi tin nhan neu muon giu memory
+- khong gia dinh `final_metadata` co field `content`
+- khong gia dinh `suggested_next_questions` luc nao cung co 3 item
 
-## 8.3 Vi du FE bang JavaScript/TypeScript
+### TypeScript contract sample
 
 ```ts
 type InvestorStreamEvent =
@@ -364,7 +437,11 @@ type InvestorStreamEvent =
       };
     }
   | { type: "error"; content: string; correlation_id?: string };
+```
 
+### Client sample bang `fetch()` + `ReadableStream`
+
+```ts
 export async function streamInvestorAgent(
   query: string,
   threadId: string,
@@ -373,7 +450,7 @@ export async function streamInvestorAgent(
     onChunk?: (text: string) => void;
     onFinalAnswer?: (text: string) => void;
     onMetadata?: (meta: Extract<InvestorStreamEvent, { type: "final_metadata" }>) => void;
-    onError?: (message: string) => void;
+    onError?: (message: string, correlationId?: string) => void;
   }
 ) {
   const response = await fetch("/api/investor-agent/chat/stream", {
@@ -417,22 +494,22 @@ export async function streamInvestorAgent(
       if (event.type === "answer_chunk") handlers.onChunk?.(event.content);
       if (event.type === "final_answer") handlers.onFinalAnswer?.(event.content);
       if (event.type === "final_metadata") handlers.onMetadata?.(event);
-      if (event.type === "error") handlers.onError?.(event.content);
+      if (event.type === "error") handlers.onError?.(event.content, event.correlation_id);
     }
   }
 }
 ```
 
-## 8.4 Goi y render UI
+### Goi y UI
 
-### Bubble answer
+#### Bubble answer
 
-- Trong luc stream, FE co the noi `answer_chunk` vao bubble dang mo
-- Khi nhan `final_answer`, co the replace bang ban final de dam bao text dung 100%
+- dang stream: noi `answer_chunk`
+- khi co `final_answer`: replace lai bang ban cuoi
 
-### Progress badge / timeline
+#### Progress
 
-Map node sang label than thien:
+Map node sang nhan de hieu:
 
 - `followup_resolver` -> `Dang hieu ngu canh`
 - `router` -> `Dang xac dinh y dinh`
@@ -440,72 +517,71 @@ Map node sang label than thien:
 - `search` -> `Dang tim nguon`
 - `source_selection` -> `Dang chon nguon`
 - `extract` -> `Dang doc noi dung`
-- `fact_builder` -> `Dang trich xuat su kien`
+- `fact_builder` -> `Dang trich xuat thong tin`
 - `claim_verifier` -> `Dang doi chieu bang chung`
-- `writer` -> `Dang tong hop cau tra loi`
-- `scope_guard` -> `Dang kiem tra pham vi cau hoi`
+- `writer` -> `Dang tong hop tra loi`
+- `scope_guard` -> `Dang kiem tra pham vi`
 
-### References
+#### References
 
-Render o cuoi answer:
+Nen render:
 
-- title
-- domain
-- click vao `url`
+- `title`
+- `source_domain`
+- link `url`
 
-### Caveats
+Neu `references=[]` thi an section nay.
 
-Nen render rieng thanh khung `Luu y` vi day la canh bao chat luong evidence.
+#### Caveats
 
-### Grounding summary
+Nen render rieng thanh khu `Luu y`.
 
-Co the render thanh nho gon:
+#### Suggested questions
 
-- `verified_claim_count`
-- `weakly_supported_claim_count`
-- `conflicting_claim_count`
-- `coverage_status`
+Neu `suggested_next_questions.length > 0`:
 
-### Processing warnings
+- render thanh 3 button/quick replies
+- click vao se gui tiep cung `thread_id`
 
-Khong nhat thiet show cho end user.
+Neu mang rong:
 
-Khuyen nghi:
+- an section
+- khong hien placeholder loi
 
-- FE khong hien truc tiep cho user thuong
-- Co the log vao console / telemetry / debug panel
+#### Processing warnings
 
-## 9. Full feature checklist cho BE va FE
+Khong nen show truc tiep cho end user.
 
-De noi da dang dung "tron ven" tinh nang cua `investor_agent`, nen co:
+Co the dua vao:
 
-### Backend
+- console
+- telemetry
+- debug panel cho internal QA
 
-- Proxy stream thay vi de FE goi truc tiep production
-- Quan ly `thread_id` theo conversation
-- Luu transcript va metadata
-- Pass-through SSE event
-- Bat auth noi bo neu deploy internal
-- Theo doi `correlation_id` khi error
+## 11. Giai thich nhanh ve grounding
 
-### Frontend
+`grounding_summary` giup UI hoac team BE hieu nhanh chat luong answer:
 
-- Ho tro multi-turn chat bang `thread_id` on dinh
-- Parse SSE `POST` stream
-- Hien progress
-- Hien streaming text
-- Hien references
-- Hien caveats
-- Hien state cho greeting / out-of-scope nhu mot answer binh thuong
-- Hien retry UI neu nhan `error`
+- `verified_claim_count`: so claim duoc support chac hon
+- `weakly_supported_claim_count`: so claim support yeu hon
+- `conflicting_claim_count`: so claim dang conflict
+- `unsupported_claim_count`: so claim khong du support
+- `reference_count`: so reference cuoi cung gan voi final answer
+- `coverage_status`: `sufficient`, `insufficient`, hoac `conflicting`
 
-## 10. Config van hanh quan trong
+Khuyen nghi UI:
 
-Settings lien quan:
+- co the show `coverage_status`
+- khong can show het cac con so neu giao dien huong consumer
+
+## 12. Config van hanh quan trong
+
+Can quan tam:
 
 - `AISEP_INTERNAL_TOKEN`
 - `REQUIRE_INTERNAL_AUTH`
 - `CHECKPOINT_BACKEND`
+- `CHECKPOINT_REDIS_URL`
 - `CHECKPOINT_TTL_MINUTES`
 - `RATE_LIMIT_STREAM_RPM`
 - `TAVILY_API_KEY`
@@ -516,27 +592,52 @@ Settings lien quan:
 - `CORS_ORIGINS`
 - `CORS_ALLOW_ALL`
 
-Nguon:
+Doc them:
 
-- [src/shared/config/settings.py](C:/Users/LENOVO/Desktop/AISEP_AI/src/shared/config/settings.py:29)
+- [docs/integration_handoff/env_and_config_reference.md](C:/Users/LENOVO/Desktop/AISEP_AI/docs/integration_handoff/env_and_config_reference.md:1)
 
 ### Goi y moi truong
 
 #### Local dev
 
-- `REQUIRE_INTERNAL_AUTH=false`
+- `REQUIRE_INTERNAL_AUTH=false` hoac FE/BE gui dung token
 - `CHECKPOINT_BACKEND=memory`
 - `CORS_ALLOW_ALL=true`
 
 #### Shared dev / staging / production
 
 - `REQUIRE_INTERNAL_AUTH=true`
-- `AISEP_INTERNAL_TOKEN` phai duoc set
+- `AISEP_INTERNAL_TOKEN` phai duoc set dung
 - `CHECKPOINT_BACKEND=redis`
 - `CHECKPOINT_TTL_MINUTES` dat theo nhu cau session
 - `CORS_ALLOW_ALL=false`
 
-## 11. Kich ban test tay de handoff
+## 13. Checklist handoff cho BE va FE
+
+### Backend
+
+- proxy stream thay vi de FE goi truc tiep production
+- quan ly `thread_id` theo conversation
+- gui `X-Internal-Token`
+- set timeout > `240s`
+- pass-through SSE frame
+- luu `final_answer` va `final_metadata`
+- log `correlation_id` khi co `error`
+
+### Frontend
+
+- giu `thread_id` on dinh trong 1 conversation
+- parse SSE stream dung cach
+- render `progress`
+- render `answer_chunk`
+- chot lai bang `final_answer`
+- render `references`
+- render `caveats`
+- render `suggested_next_questions` neu co
+- xu ly `error` trong stream, khong chi HTTP status
+- coi greeting/out-of-scope nhu answer hop le
+
+## 14. Kich ban test tay de handoff
 
 ### Case 1. Greeting
 
@@ -551,9 +652,10 @@ Request:
 
 Ky vong:
 
-- stream co `progress: followup_resolver`, `progress: router`, `progress: scope_guard`, `progress: writer`
+- stream co `progress`
 - `final_answer` la loi chao Fami
 - `references=[]`
+- `suggested_next_questions=[]`
 
 ### Case 2. In-scope single turn
 
@@ -561,14 +663,15 @@ Request:
 
 ```json
 {
-  "query": "Xu hướng đầu tư AI tại Việt Nam năm 2026 là gì?",
+  "query": "Xu huong dau tu AI tai Viet Nam nam 2026 la gi?",
   "thread_id": "demo-research-1"
 }
 ```
 
 Ky vong:
 
-- di qua du cac node research
+- di qua day du cac node research
+- co `final_answer`
 - co `final_metadata.references`
 - co `grounding_summary`
 
@@ -578,7 +681,7 @@ Request 1:
 
 ```json
 {
-  "query": "Xu hướng fintech Đông Nam Á 2026",
+  "query": "Xu huong fintech Dong Nam A 2026",
   "thread_id": "demo-followup"
 }
 ```
@@ -587,7 +690,7 @@ Request 2:
 
 ```json
 {
-  "query": "Việt Nam thì sao?",
+  "query": "Viet Nam thi sao?",
   "thread_id": "demo-followup"
 }
 ```
@@ -595,7 +698,7 @@ Request 2:
 Ky vong:
 
 - turn 2 van dung context cua turn 1
-- answer tap trung hon vao Vietnam
+- answer tap trung hon vao Viet Nam
 
 ### Case 4. Out-of-scope
 
@@ -603,7 +706,7 @@ Request:
 
 ```json
 {
-  "query": "Thời tiết hôm nay thế nào?",
+  "query": "Thoi tiet hom nay the nao?",
   "thread_id": "demo-oos"
 }
 ```
@@ -611,14 +714,26 @@ Request:
 Ky vong:
 
 - short-circuit som
-- cau tra loi tu choi pham vi
+- `references=[]`
+- `suggested_next_questions=[]`
 
-## 12. Ket luan
+### Case 5. Timeout handling
 
-Neu muon dung day du tinh nang cua `investor_agent`, diem quan trong nhat la:
+Ky vong:
 
-- BE giu `thread_id` dung cach va proxy stream
-- FE parse SSE `POST` stream dung cach
-- UI render ca `final_answer` va `final_metadata`, khong chi text
+- neu pipeline timeout ben trong AI service, stream van la HTTP `200`
+- se co event `type: "error"`
+- sau do co `[DONE]`
 
-Neu can bo tai lieu nay thanh API contract ngan hon cho team FE hoac bo sequence diagram cho team BE, co the tach tiep thanh 2 file rieng.
+## 15. Ket luan
+
+De tinh nang chatbot investor agent hoat dong on cho ca BE va FE, 3 diem quan trong nhat la:
+
+- dung `thread_id` dung cach
+- parse SSE stream dung cach
+- render day du ca `final_answer` va `final_metadata`
+
+Neu team can, co the tach tiep guide nay thanh 2 file rieng:
+
+- `investor_agent_be_guide.md`
+- `investor_agent_fe_guide.md`
