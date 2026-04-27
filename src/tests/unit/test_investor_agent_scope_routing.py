@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from src.modules.investor_agent.application.dto.state import GraphState
-from src.modules.investor_agent.application.services.scope_guard import decide_scope
+from src.modules.investor_agent.application.services.scope_guard import decide_scope, get_refusal
 from src.modules.investor_agent.infrastructure.graph.builder import route_after_router
 from src.modules.investor_agent.infrastructure.graph.nodes import router_node
 
@@ -56,6 +56,21 @@ def test_scope_guard_high_confidence_out_of_scope_refuses():
     assert decision.is_out_of_scope is True
     assert decision.final_intent == "out_of_scope"
     assert decision.heuristic_used is False
+
+
+def test_scope_guard_greeting_short_circuits_to_fami_intro():
+    decision = decide_scope(
+        query="Xin chao",
+        router_intent="out_of_scope",
+        router_confidence="low",
+        router_reasoning="short greeting",
+    )
+
+    assert decision.is_out_of_scope is True
+    assert decision.final_intent == "out_of_scope"
+    assert decision.heuristic_used is True
+    assert "heuristic_greeting_short_circuit" in decision.reason
+    assert get_refusal("Xin chao").startswith("Xin ch\u00e0o, t\u00f4i l\u00e0 Fami")
 
 
 def test_route_after_router_contract():

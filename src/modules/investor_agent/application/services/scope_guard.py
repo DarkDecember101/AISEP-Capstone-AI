@@ -14,8 +14,8 @@ SUPPORTED_INTENTS = {
 }
 
 OUT_OF_SCOPE_REFUSAL_VI = (
-    "Mình tập trung hỗ trợ các câu hỏi liên quan đến phân tích đầu tư startup "
-    "và market research cho nhà đầu tư. Nội dung bạn hỏi hiện nằm ngoài phạm vi đó."
+    "M\u00ecnh t\u1eadp trung h\u1ed7 tr\u1ee3 c\u00e1c c\u00e2u h\u1ecfi li\u00ean quan \u0111\u1ebfn ph\u00e2n t\u00edch \u0111\u1ea7u t\u01b0 startup "
+    "v\u00e0 market research cho nh\u00e0 \u0111\u1ea7u t\u01b0. N\u1ed9i dung b\u1ea1n h\u1ecfi hi\u1ec7n n\u1eb1m ngo\u00e0i ph\u1ea1m vi \u0111\u00f3."
 )
 OUT_OF_SCOPE_REFUSAL_EN = (
     "I'm focused on questions related to startup investment analysis "
@@ -23,8 +23,8 @@ OUT_OF_SCOPE_REFUSAL_EN = (
 )
 
 OUT_OF_SCOPE_CAVEAT_VI = (
-    "Câu hỏi nằm ngoài phạm vi phân tích đầu tư "
-    "(xu hướng thị trường, quy định, tin tức, phân tích đối thủ)."
+    "C\u00e2u h\u1ecfi n\u1eb1m ngo\u00e0i ph\u1ea1m vi ph\u00e2n t\u00edch \u0111\u1ea7u t\u01b0 "
+    "(xu h\u01b0\u1edbng th\u1ecb tr\u01b0\u1eddng, quy \u0111\u1ecbnh, tin t\u1ee9c, ph\u00e2n t\u00edch \u0111\u1ed1i th\u1ee7)."
 )
 OUT_OF_SCOPE_CAVEAT_EN = (
     "This query is outside investor-research scope "
@@ -35,8 +35,29 @@ OUT_OF_SCOPE_CAVEAT_EN = (
 OUT_OF_SCOPE_REFUSAL = OUT_OF_SCOPE_REFUSAL_VI
 OUT_OF_SCOPE_CAVEAT = OUT_OF_SCOPE_CAVEAT_VI
 
+GREETING_RESPONSE_VI = (
+    "Xin ch\u00e0o, t\u00f4i l\u00e0 Fami \u2013 tr\u1ee3 l\u00fd h\u1ed7 tr\u1ee3 thu th\u1eadp v\u00e0 "
+    "ph\u00e2n t\u00edch th\u00f4ng tin \u0111\u1ea7u t\u01b0 c\u1ee7a AISEP. T\u00f4i c\u00f3 th\u1ec3 t\u00ecm "
+    "ki\u1ebfm, t\u1ed5ng h\u1ee3p v\u00e0 suy lu\u1eadn t\u1eeb c\u00e1c ngu\u1ed3n th\u00f4ng tin li\u00ean "
+    "quan \u0111\u1ebfn th\u1ecb tr\u01b0\u1eddng, ng\u00e0nh, \u0111\u1ed1i th\u1ee7 c\u1ea1nh tranh, tin t\u1ee9c "
+    "v\u00e0 r\u1ee7i ro, h\u1ed7 tr\u1ee3 b\u1ea1n c\u00f3 th\u00eam g\u00f3c nh\u00ecn tr\u01b0\u1edbc khi "
+    "\u0111\u1ea7u t\u01b0. B\u1ea1n mu\u1ed1n t\u00f4i t\u00ecm hi\u1ec3u v\u1ec1 ng\u00e0nh ho\u1eb7c th\u1ecb "
+    "tr\u01b0\u1eddng n\u00e0o ?"
+)
+
 _VIETNAMESE_MARKERS = re.compile(
-    r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]"
+    r"[\u00e0\u00e1\u1ea3\u00e3\u1ea1\u0103\u1eaf\u1eb1\u1eb3\u1eb5\u1eb7\u00e2\u1ea5\u1ea7\u1ea9\u1eab\u1ead"
+    r"\u00e8\u00e9\u1ebb\u1ebd\u1eb9\u00ea\u1ebf\u1ec1\u1ec3\u1ec5\u1ec7\u00ec\u00ed\u1ec9\u0129\u1ecb"
+    r"\u00f2\u00f3\u1ecf\u00f5\u1ecd\u00f4\u1ed1\u1ed3\u1ed5\u1ed7\u1ed9\u01a1\u1edb\u1edd\u1edf\u1ee1\u1ee3"
+    r"\u00f9\u00fa\u1ee7\u0169\u1ee5\u01b0\u1ee9\u1eeb\u1eed\u1eef\u1ef1\u1ef3\u00fd\u1ef7\u1ef9\u1ef5\u0111]"
+)
+_GREETING_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"hi+|hello+|hey+|alo+|halo+|"
+    r"xin\s+ch(?:ao|\u00e0o)|"
+    r"ch(?:ao|\u00e0o)"
+    r")(?:\s+(?:ban|b\u1ea1n|em|anh|chi|\u1ecb|there|bot|fami))?\s*[!?,.\s~]*$",
+    re.IGNORECASE,
 )
 
 
@@ -45,11 +66,19 @@ def _is_vietnamese(text: str) -> bool:
     return bool(_VIETNAMESE_MARKERS.search(text or ""))
 
 
+def is_greeting(query: str) -> bool:
+    return bool(_GREETING_PATTERN.match((query or "").strip()))
+
+
 def get_refusal(query: str = "") -> str:
+    if is_greeting(query):
+        return GREETING_RESPONSE_VI
     return OUT_OF_SCOPE_REFUSAL_VI if _is_vietnamese(query) else OUT_OF_SCOPE_REFUSAL_EN
 
 
 def get_caveat(query: str = "") -> str:
+    if is_greeting(query):
+        return ""
     return OUT_OF_SCOPE_CAVEAT_VI if _is_vietnamese(query) else OUT_OF_SCOPE_CAVEAT_EN
 
 
@@ -73,30 +102,30 @@ RouterConfidence = Literal["high", "medium", "low"]
 
 _IN_SCOPE_KEYWORDS: Dict[str, set[str]] = {
     "market_trend": {
-        "xu hướng", "trend", "thị trường", "market", "growth", "funding", "adoption",
-        "fintech", "saas", "đầu tư", "vốn", "valuation", "startup", "investment",
+        "xu h\u01b0\u1edbng", "trend", "th\u1ecb tr\u01b0\u1eddng", "market", "growth", "funding", "adoption",
+        "fintech", "saas", "\u0111\u1ea7u t\u01b0", "v\u1ed1n", "valuation", "startup", "investment",
     },
     "regulation": {
-        "quy định", "nghị định", "thông tư", "regulation", "policy", "compliance",
-        "license", "effective date", "pháp lý", "giấy phép", "luật",
+        "quy \u0111\u1ecbnh", "ngh\u1ecb \u0111\u1ecbnh", "th\u00f4ng t\u01b0", "regulation", "policy", "compliance",
+        "license", "effective date", "ph\u00e1p l\u00fd", "gi\u1ea5y ph\u00e9p", "lu\u1eadt",
     },
     "news": {
-        "tin tức", "mới nhất", "cập nhật", "latest", "news", "announced", "recent",
-        "công bố", "vừa", "breaking",
+        "tin t\u1ee9c", "m\u1edbi nh\u1ea5t", "c\u1eadp nh\u1eadt", "latest", "news", "announced", "recent",
+        "c\u00f4ng b\u1ed1", "v\u1eeba", "breaking",
     },
     "competitor_context": {
-        "đối thủ", "so sánh", "vs", "competitor", "landscape", "player", "positioning",
-        "benchmark", "market map", "ai là đối thủ",
+        "\u0111\u1ed1i th\u1ee7", "so s\u00e1nh", "vs", "competitor", "landscape", "player", "positioning",
+        "benchmark", "market map", "ai l\u00e0 \u0111\u1ed1i th\u1ee7",
     },
 }
 
 _OUT_SCOPE_PATTERNS = {
-    "weather": re.compile(r"\b(weather|temperature|rain|forecast|humidity|storm|thời tiết|mưa|nắng)\b", re.IGNORECASE),
-    "math": re.compile(r"\b(calculate|solve|equation|integral|derivative|what is \d+\s*[\+\-\*/]|\d+\s*[\+\-\*/]\s*\d+|bằng bao nhiêu|tính giúp)\b", re.IGNORECASE),
-    "coding": re.compile(r"\b(code|debug|python|javascript|java|c\+\+|sql|api endpoint|programming|lập trình|viết code)\b", re.IGNORECASE),
-    "translation": re.compile(r"\b(translate|translation|dịch sang|dịch giúp)\b", re.IGNORECASE),
-    "entertainment": re.compile(r"\b(movie|song|celebrity|football score|trivia|game lore|phim|ca sĩ)\b", re.IGNORECASE),
-    "personal_advice": re.compile(r"\b(my relationship|dating advice|medical advice|therapy|personal advice|tư vấn tình cảm|tư vấn cá nhân)\b", re.IGNORECASE),
+    "weather": re.compile(r"\b(weather|temperature|rain|forecast|humidity|storm|th\u1eddi ti\u1ebft|m\u01b0a|n\u1eafng)\b", re.IGNORECASE),
+    "math": re.compile(r"\b(calculate|solve|equation|integral|derivative|what is \d+\s*[\+\-\*/]|\d+\s*[\+\-\*/]\s*\d+|b\u1eb1ng bao nhi\u00eau|t\u00ednh gi\u00fap)\b", re.IGNORECASE),
+    "coding": re.compile(r"\b(code|debug|python|javascript|java|c\+\+|sql|api endpoint|programming|l\u1eadp tr\u00ecnh|vi\u1ebft code)\b", re.IGNORECASE),
+    "translation": re.compile(r"\b(translate|translation|d\u1ecbch sang|d\u1ecbch gi\u00fap)\b", re.IGNORECASE),
+    "entertainment": re.compile(r"\b(movie|song|celebrity|football score|trivia|game lore|phim|ca s\u0129)\b", re.IGNORECASE),
+    "personal_advice": re.compile(r"\b(my relationship|dating advice|medical advice|therapy|personal advice|t\u01b0 v\u1ea5n t\u00ecnh c\u1ea3m|t\u01b0 v\u1ea5n c\u00e1 nh\u00e2n)\b", re.IGNORECASE),
 }
 
 
@@ -120,6 +149,8 @@ def heuristic_classify_intent(query: str) -> tuple[RouterIntent, str]:
     normalized = _normalize_query(query)
     if not normalized:
         return "mixed", "empty_query_default_in_scope"
+    if is_greeting(query):
+        return "out_of_scope", "heuristic_greeting_short_circuit"
 
     matches: list[str] = []
     for intent, keywords in _IN_SCOPE_KEYWORDS.items():
@@ -208,13 +239,15 @@ def detect_out_of_scope(query: str) -> ScopeDecision:
 
 
 def build_out_of_scope_payload(query: str = "") -> dict:
+    greeting_query = is_greeting(query)
+    caveat = get_caveat(query)
     return {
         "intent": "out_of_scope",
         "final_answer": get_refusal(query),
         "references": [],
-        "caveats": [get_caveat(query)],
-        "writer_notes": ["scope_guard_refusal"],
-        "processing_warnings": ["out_of_scope_query"],
+        "caveats": [caveat] if caveat else [],
+        "writer_notes": ["greeting_response"] if greeting_query else ["scope_guard_refusal"],
+        "processing_warnings": ["greeting_query"] if greeting_query else ["out_of_scope_query"],
         "grounding_summary": {
             "verified_claim_count": 0,
             "weakly_supported_claim_count": 0,

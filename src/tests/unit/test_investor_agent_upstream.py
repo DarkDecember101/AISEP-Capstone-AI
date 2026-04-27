@@ -6,15 +6,18 @@ from src.modules.investor_agent.application.dto.state import (
     ExtractedDocument,
     FactItem,
     GraphState,
+    ReferenceItem,
     RequiredCoverage,
     SearchResult,
     SelectedSource,
+    VerifiedClaim,
 )
 from src.modules.investor_agent.infrastructure.graph.nodes import (
     claim_verifier_node,
     extract_node,
     fact_builder_node,
     source_selection_node,
+    writer_node,
 )
 
 
@@ -155,3 +158,105 @@ def test_claim_verifier_promotes_supported_claims():
     assert len(result["verified_claims"]) >= 1
     assert result["coverage_assessment"]["coverage_status"] in [
         "sufficient", "conflicting"]
+
+
+def test_writer_uses_only_grounded_references(monkeypatch):
+    async def fake_generate_structured_async(self, prompt, response_schema, model_name=None, timeout=None, image_paths=None):
+        return writer_node.FinalOutput(
+            final_answer="Enterprise AI demand remains active [1].",
+            references=[
+                ReferenceItem(
+                    title="Made up source",
+                    url="https://fake.example.com/invented",
+                    source_domain="fake.example.com",
+                )
+            ],
+            caveats=[],
+        )
+
+    monkeypatch.setattr(
+        writer_node.GeminiClient,
+        "generate_structured_async",
+        fake_generate_structured_async,
+    )
+
+    state = GraphState(
+        user_query="Enterprise AI demand",
+        intent="market_trend",
+        verified_claims=[
+            VerifiedClaim(
+                claim_id="claim_1",
+                claim_text="Enterprise AI demand remains active.",
+                status="supported",
+                supporting_sources=[
+                    SelectedSource(
+                        url="https://www.reuters.com/technology/enterprise-ai-demand",
+                        title="Reuters enterprise AI demand",
+                        source_domain="www.reuters.com",
+                        selection_reason="trusted",
+                        trust_tier="high",
+                    )
+                ],
+                verification_note="Claim supported by fact evidence.",
+            ).model_dump()
+        ],
+    )
+
+    result = asyncio.run(writer_node.run(state))
+
+    assert len(result["references"]) == 1
+    assert result["references"][0]["url"] == "https://www.reuters.com/technology/enterprise-ai-demand"
+    assert all(ref["url"] != "https://fake.example.com/invented" for ref in result["references"])
+    assert "writer_used_grounded_reference_fallback" in result["processing_warnings"]
+
+
+def test_writer_conflict_only_prompt_includes_disputed_claims(monkeypatch):
+    captured = {}
+
+    async def fake_generate_structured_async(self, prompt, response_schema, model_name=None, timeout=None, image_paths=None):
+        captured["prompt"] = prompt
+        return writer_node.FinalOutput(
+            final_answer="The available evidence is disputed [1].",
+            references=[
+                ReferenceItem(
+                    title="Reuters report",
+                    url="https://www.reuters.com/markets/disputed-metric",
+                    source_domain="www.reuters.com",
+                )
+            ],
+            caveats=["Treat the claim cautiously."],
+        )
+
+    monkeypatch.setattr(
+        writer_node.GeminiClient,
+        "generate_structured_async",
+        fake_generate_structured_async,
+    )
+
+    state = GraphState(
+        user_query="Is the metric reliable?",
+        intent="news",
+        conflicting_claims=[
+            VerifiedClaim(
+                claim_id="claim_conflict_1",
+                claim_text="Reported growth rate reached 30% in 2025.",
+                status="conflicting",
+                supporting_sources=[
+                    SelectedSource(
+                        url="https://www.reuters.com/markets/disputed-metric",
+                        title="Reuters report",
+                        source_domain="www.reuters.com",
+                        selection_reason="trusted",
+                        trust_tier="high",
+                    )
+                ],
+                verification_note="Conflicts with claim claim_conflict_2",
+            ).model_dump()
+        ],
+    )
+
+    result = asyncio.run(writer_node.run(state))
+
+    assert "Reported growth rate reached 30% in 2025." in captured["prompt"]
+    assert "[DISPUTED]" in captured["prompt"]
+    assert result["final_answer"].strip() != ""

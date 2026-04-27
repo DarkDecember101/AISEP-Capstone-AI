@@ -213,6 +213,23 @@ def test_final_assembler_conflict_caveat_syncs_conflicting_count():
     assert payload["grounding_summary"]["coverage_status"] == "conflicting"
 
 
+def test_final_assembler_returns_fami_greeting_for_salutation_query():
+    payload = assemble_final_response(
+        {
+            "intent": "out_of_scope",
+            "user_query": "Hello",
+            "final_answer": "",
+            "references": [],
+            "caveats": [],
+            "processing_warnings": [],
+        }
+    )
+
+    assert payload["final_answer"].startswith("Xin ch\u00e0o, t\u00f4i l\u00e0 Fami")
+    assert payload["caveats"] == []
+    assert "greeting_query" in payload["processing_warnings"]
+
+
 def test_stream_uses_assembler_output(monkeypatch):
     """/chat/stream must emit final_answer + final_metadata with assembler output."""
     final_state = {

@@ -11,7 +11,7 @@ from src.modules.investor_agent.application.dto.state import (
     as_model,
     as_model_list,
 )
-from src.modules.investor_agent.application.services.scope_guard import get_refusal, get_caveat
+from src.modules.investor_agent.application.services.scope_guard import get_refusal, get_caveat, is_greeting
 from src.shared.providers.llm.gemini_client import GeminiClient
 
 
@@ -62,11 +62,26 @@ class FinalOutput(BaseModel):
     caveats: List[str]
 
 
+def _reference_from_source(source: Any) -> ReferenceItem:
+    return ReferenceItem(
+        title=getattr(source, "title", "") or "",
+        url=getattr(source, "url", "") or "",
+        source_domain=getattr(source, "source_domain", "") or "",
+    )
+
+
+def _format_verified_claim(claim: VerifiedClaim) -> str:
+    primary_url = claim.supporting_sources[0].url if claim.supporting_sources else ""
+    note = f" Note: {claim.verification_note}" if claim.verification_note else ""
+    return f"- [SRC:{primary_url}] {claim.claim_text} ({claim.status}).{note}"
+
+
 async def run(state: GraphState) -> Dict[str, Any]:
     if getattr(state, "intent", None) == "out_of_scope":
         query = (getattr(state, "user_query", "") or "").strip()
         refusal = get_refusal(query)
         caveat = get_caveat(query)
+        greeting_query = is_greeting(query)
         summary = GroundingSummary(
             verified_claim_count=0,
             weakly_supported_claim_count=0,
@@ -78,9 +93,9 @@ async def run(state: GraphState) -> Dict[str, Any]:
         return {
             "final_answer": refusal,
             "references": [],
-            "caveats": [caveat],
-            "writer_notes": ["scope_guard_refusal"],
-            "processing_warnings": list(dict.fromkeys((state.processing_warnings or []) + ["out_of_scope_query"])),
+            "caveats": [caveat] if caveat else [],
+            "writer_notes": ["greeting_response"] if greeting_query else ["scope_guard_refusal"],
+            "processing_warnings": list(dict.fromkeys((state.processing_warnings or []) + (["greeting_query"] if greeting_query else ["out_of_scope_query"]))),
             "grounding_summary": summary.model_dump(),
             "messages": [AIMessage(content=refusal)],
         }
@@ -119,17 +134,6 @@ async def run(state: GraphState) -> Dict[str, Any]:
         getattr(state, "search_decision", "full_search"),
     )
 
-    real_refs = {}
-    for claim in supported_claims + conflicts:
-        for s in claim.supporting_sources:
-            if is_valid_reference(s.url, s.title):
-                real_refs[s.url] = s
-
-    verified_str = "\n".join(
-        [f"- [SRC:{c.supporting_sources[0].url if c.supporting_sources else ''}] {c.claim_text} ({c.status})" for c in supported_claims])
-    conflicts_str = "\n".join(
-        [f"- CONFLICT: {c.claim_text}" for c in conflicts])
-
     if not supported_claims and conflicts:
         # Promote conflicting claims to weakly_supported so the writer has
         # something to work with. The prompt explicitly marks them as disputed.
@@ -144,6 +148,19 @@ async def run(state: GraphState) -> Dict[str, Any]:
             for c in conflicts
         ]
         conflicts = []  # already embedded in supported_claims with DISPUTED tag
+
+    grounded_refs_by_url: Dict[str, ReferenceItem] = {}
+    for claim in supported_claims + conflicts:
+        for source in claim.supporting_sources:
+            if is_valid_reference(source.url, source.title):
+                grounded_refs_by_url[source.url] = _reference_from_source(source)
+
+    verified_str = "\n".join(_format_verified_claim(c) for c in supported_claims)
+    conflicts_str = "\n".join([f"- CONFLICT: {c.claim_text}" for c in conflicts])
+    allowed_refs_str = "\n".join(
+        f"[{index}] {ref.title} | {ref.url} | {ref.source_domain}"
+        for index, ref in enumerate(grounded_refs_by_url.values(), start=1)
+    )
 
     if not supported_claims and not conflicts:
         _raw_query_for_fallback = (
@@ -234,6 +251,11 @@ REFERENCE RULE:
 - In final_answer, use inline citation markers like [1], [2].
 - The references list must map cleanly to the sources actually used.
 - Do not cite a source that is not used in the answer.
+- The references list must be a subset of the Allowed References below, copied exactly.
+- If a point cannot be tied to an Allowed Reference, do not cite it.
+
+Allowed References:
+{allowed_refs_str}
 
 Verified Claims:
 {verified_str}
@@ -251,13 +273,20 @@ Conflicting Information:
         writer_notes.append("writer_model_returned_empty_answer")
         answer_text = "I found limited verified evidence for this question, so I cannot provide a strong conclusion."
 
-    final_refs = []
+    final_refs: List[ReferenceItem] = []
     warnings = []
+    seen_urls = set()
     for r in res.references:
-        if is_valid_reference(r.url, r.title):
-            final_refs.append(r)
+        grounded_ref = grounded_refs_by_url.get(r.url)
+        if grounded_ref and grounded_ref.url not in seen_urls:
+            final_refs.append(grounded_ref)
+            seen_urls.add(grounded_ref.url)
         else:
-            warnings.append(f"Dropped invalid/placeholder reference: {r.url}")
+            warnings.append(f"Dropped ungrounded/invalid reference: {r.url}")
+
+    if not final_refs and grounded_refs_by_url:
+        final_refs = list(grounded_refs_by_url.values())[:5]
+        warnings.append("writer_used_grounded_reference_fallback")
 
     if not final_refs and using_previous_context:
         previous_refs = as_model_list(

@@ -107,8 +107,9 @@ def _enforce_scope_payload(state: Mapping[str, Any], assembled: Dict[str, Any]) 
             dict.fromkeys(list(assembled.get("processing_warnings")
                           or []) + payload["processing_warnings"])
         )
+        caveat = get_caveat(query)
         payload["caveats"] = list(dict.fromkeys(
-            list(assembled.get("caveats") or []) + [get_caveat(query)]))
+            list(assembled.get("caveats") or []) + ([caveat] if caveat else [])))
         if decision.refusal_reason:
             payload["writer_notes"] = list(dict.fromkeys(
                 list(payload.get("writer_notes") or []) + [f"scope_guard_refusal_reason:{decision.refusal_reason}"]))
