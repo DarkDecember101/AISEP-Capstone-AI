@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    # Defaults to <STORAGE_DIR>/logs to preserve legacy behavior; override
+    # with LOG_DIR env when logs live on a dedicated volume (production).
+    LOG_DIR: str = os.getenv(
+        "LOG_DIR", os.path.join(os.getenv("STORAGE_DIR", os.path.join(os.getcwd(), "storage")), "logs"))
 
     # Celery / Redis
     CELERY_BROKER_URL: str = os.getenv(

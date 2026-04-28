@@ -6,11 +6,16 @@ from src.shared.correlation import CorrelationIdMiddleware
 from src.shared.error_response import register_error_handlers
 from src.shared.health import router as health_router
 from src.shared.tracing.setup import init_tracing
+from src.shared.logging.logger import configure_root_logger
 from src.modules.evaluation.api.router import router as evaluation_router
 from src.modules.investor_agent.api.router import router as investor_router
 from src.modules.recommendation.api.router import router as recommendation_router
 import uvicorn
 import logging
+
+# Configure root logger before anything else so uvicorn / 3rd-party logs
+# are captured to the rotating JSON file shared with the .NET backend.
+configure_root_logger("aisep.log")
 
 logger = logging.getLogger("aisep.main")
 
