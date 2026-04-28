@@ -12,6 +12,11 @@ Env vars (defined in Settings / .env):
 import os
 from celery import Celery
 from src.shared.config.settings import settings
+from src.shared.logging.logger import configure_root_logger
+
+# Worker writes to a separate file to avoid multi-process rotation conflicts
+# with the API container (both share the same /app/storage volume).
+configure_root_logger("aisep-worker.log")
 
 celery_app = Celery(
     "aisep_ai",
